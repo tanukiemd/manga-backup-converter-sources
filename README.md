@@ -77,6 +77,7 @@ a mapping properly:
 4. Add a `SourceMapping` entry following the existing examples in
    `app/sources.py`, plus a code comment saying what you verified it
    against.
+5. Add yourself to the [Contributors](#contributors) list below in the same PR.
 
 Please don't add a mapping based only on reading the extension source - as
 several existing entries in this file document, that alone has produced
@@ -86,6 +87,15 @@ for the same site). Verify against real backup data if at all possible.
 Can't easily figure out the transform by hand? The website's "test backup"
 upload lets you send a real paired backup for manual review instead -
 that's often faster than reverse-engineering it yourself.
+
+## Contributors
+
+People who've added a verified source mapping - thank you!
+
+- [@tanukiemd](https://github.com/tanukiemd) - initial mapping set (MangaDex, MangaFire, MangaPlus, Comix, AsuraScans, Mangakakalot, TCB Scans, Weeb Central, BatCave, Read Comics Online)
+
+Added a mapping? Add your line above in the same PR - GitHub handle and
+which source(s) you mapped.
 
 ## License
 
