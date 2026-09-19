@@ -20,6 +20,10 @@ This repo has two things in it:
   sources within one backup and writes a cleaned copy with the extras
   removed (keeping whichever has the most chapters read by default). Same
   format in, same format out.
+- **`repair_backup.py`** - drops entries missing a url or title, collapses
+  duplicate chapters within the same manga, and removes category tags
+  pointing at a category that no longer exists. Same format in, same
+  format out.
 
 ## Using the CLI
 
@@ -59,6 +63,14 @@ python find_duplicates.py --app tachiyomi --backup library.tachibk --apply --out
 The second form keeps whichever entry in each duplicate group has the most
 chapters read. Run `python find_duplicates.py --help` for the full option
 list, including how to override the suggestion per group.
+
+To clean up broken entries, duplicate chapters, and dangling category
+references in a backup:
+
+```bash
+python repair_backup.py --app tachiyomi --backup library.tachibk
+python repair_backup.py --app tachiyomi --backup library.tachibk --apply --out repaired.tachibk
+```
 
 ## Why the source-ID mapping exists
 
