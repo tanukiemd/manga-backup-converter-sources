@@ -16,6 +16,10 @@ This repo has two things in it:
 - **`compare_backups.py`** - same idea, for the "compare two backups of the
   same app" feature: newly added manga, manga no longer present, reading
   progress changes. Read-only, writes nothing back.
+- **`find_duplicates.py`** - finds manga added from multiple different
+  sources within one backup and writes a cleaned copy with the extras
+  removed (keeping whichever has the most chapters read by default). Same
+  format in, same format out.
 
 ## Using the CLI
 
@@ -43,6 +47,18 @@ python compare_backups.py --app tachiyomi --old old_library.tachibk --new new_li
 
 Add `--json out.json` to also save the full result. Run
 `python compare_backups.py --help` for the full option list.
+
+To find (and optionally remove) manga duplicated across multiple sources
+within one backup:
+
+```bash
+python find_duplicates.py --app tachiyomi --backup library.tachibk
+python find_duplicates.py --app tachiyomi --backup library.tachibk --apply --out cleaned.tachibk
+```
+
+The second form keeps whichever entry in each duplicate group has the most
+chapters read. Run `python find_duplicates.py --help` for the full option
+list, including how to override the suggestion per group.
 
 ## Why the source-ID mapping exists
 
