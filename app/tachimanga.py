@@ -22,14 +22,16 @@ import zipfile
 from pathlib import Path
 
 from .model import TachiManga, TachiChapter, TachiHistoryEntry, TachiTrack
+from .safety import bounded_zip_read
 
 
 def read_tmb(tmb_bytes: bytes):
     """Return (list[TachiManga], raw contents.zip bytes) for library items only."""
     outer = zipfile.ZipFile(io.BytesIO(tmb_bytes))
-    contents_zip_bytes = outer.read("contents.zip")
+    contents_zip_bytes = bounded_zip_read(outer, "contents.zip")
     inner = zipfile.ZipFile(io.BytesIO(contents_zip_bytes))
-    db_bytes = inner.read("inner/tachimanga.db") if "inner/tachimanga.db" in inner.namelist() else inner.read("tachimanga.db")
+    db_name = "inner/tachimanga.db" if "inner/tachimanga.db" in inner.namelist() else "tachimanga.db"
+    db_bytes = bounded_zip_read(inner, db_name)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         tmp.write(db_bytes)
@@ -94,12 +96,12 @@ def _read_mangas(conn):
 def write_into_tmb(target_tmb_bytes: bytes, new_mangas: list) -> bytes:
     """Merge new_mangas into an existing Tachimanga backup, return new .tmb bytes."""
     outer = zipfile.ZipFile(io.BytesIO(target_tmb_bytes))
-    contents_zip_bytes = outer.read("contents.zip")
+    contents_zip_bytes = bounded_zip_read(outer, "contents.zip")
     inner_names = zipfile.ZipFile(io.BytesIO(contents_zip_bytes)).namelist()
     db_path_in_zip = "inner/tachimanga.db" if "inner/tachimanga.db" in inner_names else "tachimanga.db"
 
     inner = zipfile.ZipFile(io.BytesIO(contents_zip_bytes))
-    db_bytes = inner.read(db_path_in_zip)
+    db_bytes = bounded_zip_read(inner, db_path_in_zip)
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         tmp.write(db_bytes)
@@ -117,7 +119,7 @@ def write_into_tmb(target_tmb_bytes: bytes, new_mangas: list) -> bytes:
     new_contents_zip = _rebuild_zip(contents_zip_bytes, {db_path_in_zip: new_db_bytes})
 
     checksum = hashlib.sha1(new_contents_zip).hexdigest()
-    meta = json.loads(outer.read("meta.json"))
+    meta = json.loads(bounded_zip_read(outer, "meta.json"))
     meta["checksum"] = checksum
     meta["size"] = len(new_contents_zip)
 
@@ -135,7 +137,7 @@ def _rebuild_zip(original_zip_bytes: bytes, replacements: dict) -> bytes:
         for name in original.namelist():
             data = replacements.get(name, None)
             if data is None:
-                data = original.read(name)
+                data = bounded_zip_read(original, name)
             z.writestr(name, data)
     return buf.getvalue()
 

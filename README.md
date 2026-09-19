@@ -13,6 +13,9 @@ This repo has two things in it:
 - **`cli.py`** - a command-line wrapper around that engine so you can
   convert a backup entirely on your own machine, no upload, no server, no
   internet connection needed once you've cloned this repo.
+- **`compare_backups.py`** - same idea, for the "compare two backups of the
+  same app" feature: newly added manga, manga no longer present, reading
+  progress changes. Read-only, writes nothing back.
 
 ## Using the CLI
 
@@ -31,6 +34,15 @@ python cli.py --from tachiyomi --to aidoku \
 Add `--target existing_backup.aib` to merge into a backup you already have
 in the target app, instead of starting from an empty one. Run
 `python cli.py --help` for the full option list.
+
+To compare two backups of the same app instead of converting between apps:
+
+```bash
+python compare_backups.py --app tachiyomi --old old_library.tachibk --new new_library.tachibk
+```
+
+Add `--json out.json` to also save the full result. Run
+`python compare_backups.py --help` for the full option list.
 
 ## Why the source-ID mapping exists
 

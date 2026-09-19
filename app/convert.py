@@ -23,6 +23,7 @@ import plistlib
 from . import pb
 from .model import TachiManga, TachiChapter, TachiHistoryEntry, TachiTrack
 from .sources import BY_TACHI_SOURCE_ID, BY_AIDOKU_ID
+from .safety import bounded_gzip_decompress, DecompressionBombError
 
 UTC = dt.timezone.utc
 STATUS_TACHI_TO_AIDOKU = {1: 1, 2: 2, 4: 2, 5: 3, 6: 4}
@@ -51,6 +52,9 @@ class ConversionReport:
         self.chapters_added = 0
         self.history_added = 0
         self.errors = []
+        # Not part of as_dict()/the user-facing report - internal bookkeeping
+        # for the anonymous "which sources are people asking for" counter.
+        self.unmapped_source_ids = []
 
     def as_dict(self):
         return {
@@ -99,7 +103,7 @@ def _nsfw_viewer(genres):
 # ---------------------------------------------------------------------------
 
 def read_tachibk(tachibk_bytes: bytes) -> list:
-    raw = gzip.decompress(tachibk_bytes)
+    raw = bounded_gzip_decompress(tachibk_bytes)
     top = pb.parse(raw)
 
     catname_by_order = {}
@@ -170,7 +174,7 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
 
 def write_into_tachibk(target_tachibk_bytes: bytes, mangas: list):
     report = ConversionReport()
-    target_raw = gzip.decompress(target_tachibk_bytes)
+    target_raw = bounded_gzip_decompress(target_tachibk_bytes)
     top = pb.parse(target_raw)
 
     cats = []
@@ -381,6 +385,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
         mapping = BY_TACHI_SOURCE_ID.get(manga.source_id)
         if mapping is None:
             report.manga_skipped_no_source.append(manga.title)
+            report.unmapped_source_ids.append(manga.source_id)
             continue
 
         try:
