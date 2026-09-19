@@ -5,7 +5,7 @@ The open-source conversion engine and source-ID mapping tables behind
 convert manga library backups between **Tachiyomi / Mihon / Komikku**,
 **Tachimanga** and **Aidoku**, keeping read progress, categories and tracking.
 
-This repo has two things in it:
+This repo has the engine plus a few CLI wrappers around it:
 
 - **`app/`** - the actual conversion engine (protobuf/plist parsing, the
   merge logic, the source-ID mapping tables). This is the exact same code
@@ -24,6 +24,10 @@ This repo has two things in it:
   duplicate chapters within the same manga, and removes category tags
   pointing at a category that no longer exists. Same format in, same
   format out.
+- **`wrapped_stats.py`** - total manga, chapters read, top sources, top
+  genres, and oldest entry from a backup. The website turns this into a
+  shareable image in the browser; here it's just printed (or dumped as
+  JSON with `--json`).
 
 ## Using the CLI
 
@@ -70,6 +74,12 @@ references in a backup:
 ```bash
 python repair_backup.py --app tachiyomi --backup library.tachibk
 python repair_backup.py --app tachiyomi --backup library.tachibk --apply --out repaired.tachibk
+```
+
+To see your manga stats (total manga, chapters read, top sources, top genres, oldest entry):
+
+```bash
+python wrapped_stats.py --app tachiyomi --backup library.tachibk
 ```
 
 ## Why the source-ID mapping exists
