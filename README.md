@@ -61,6 +61,19 @@ a mapping properly:
 3. Compare the manga/chapter URLs or IDs in each backup - `.tachibk` is
    gzip+protobuf, `.aib` is a binary plist, `.tmb` (Tachimanga) is a zip
    containing a SQLite db. Figure out the transform between them.
+
+   `diff_tool.py` automates the tedious part of this step: point it at both
+   backups and it matches manga by title, lines up the raw URLs/IDs for
+   each match, and checks a few common id patterns (last URL segment,
+   before/after a `-` or `.`) for you:
+
+   ```bash
+   python diff_tool.py --tachi library.tachibk --aidoku library.aib
+   ```
+
+   It only ever prints a suggestion - it never edits `sources.py` itself,
+   and won't find anything for sources that need more custom logic than
+   the patterns it checks for.
 4. Add a `SourceMapping` entry following the existing examples in
    `app/sources.py`, plus a code comment saying what you verified it
    against.
