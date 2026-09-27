@@ -502,10 +502,12 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
         else:
             report.manga_already_present.append(manga.title)
 
+        unmappable = 0
         for ch in manga.chapters:
             try:
                 cid = mapping.tachi_to_aidoku_chapter_id(ch.url)
             except Exception:
+                unmappable += 1
                 continue
             if (sid, mid, cid) in have_ch:
                 continue
@@ -530,6 +532,13 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             new["chapters"].append(entry)
             have_ch.add((sid, mid, cid))
             report.chapters_added += 1
+        if unmappable:
+            # e.g. MangaFire's legacy "/read/<slug>/<lang>/chapter-N" links carry
+            # no chapter id; refreshing the title in Mihon rewrites them to the
+            # current format and keeps the read marks by chapter number.
+            report.errors.append(
+                f"{manga.title}: {unmappable} chapter(s) use an old link format and were left out. "
+                f"Refresh this title in Mihon/Komikku, then export and convert again.")
 
         lastread, lastchap = None, None
         chapter_by_url = {ch.url: ch for ch in manga.chapters}
