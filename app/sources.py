@@ -10,7 +10,9 @@ source name/baseURL match alone). Sources not listed here are reported as
 "not convertible" rather than guessed at.
 """
 import hashlib
+import json
 import re
+from urllib.parse import parse_qs, urlparse
 
 
 class SourceMapping:
@@ -71,7 +73,7 @@ class SourceMapping:
 
     def tachi_chapter_url(self, aidoku_manga_id, aidoku_chapter_id, aidoku_chapter_url=None):
         if self.tachi_chapter_url_override:
-            return self.tachi_chapter_url_override(aidoku_manga_id, aidoku_chapter_id)
+            return self.tachi_chapter_url_override(aidoku_manga_id, aidoku_chapter_id, aidoku_chapter_url)
         return aidoku_chapter_url or self.aidoku_chapter_url_from_id(aidoku_chapter_id)
 
     def aidoku_manga_url(self, aidoku_id, tachi_url, chapter_urls):
@@ -83,7 +85,7 @@ class SourceMapping:
 
     def aidoku_chapter_url(self, aidoku_manga_id, aidoku_chapter_id, tachi_chapter_url):
         if self.aidoku_chapter_url_override:
-            return self.aidoku_chapter_url_override(aidoku_manga_id, aidoku_chapter_id)
+            return self.aidoku_chapter_url_override(aidoku_manga_id, aidoku_chapter_id, tachi_chapter_url)
         return tachi_chapter_url
 
     def tachi_source_id_for_manga(self, aidoku_manga_id, chapter_langs):
@@ -116,7 +118,11 @@ def _tachi_source_id(name: str, lang: str, version: int = 1) -> int:
 
 
 def _attach_languages(mapping, extension_name, langs):
-    by_lang = {lang.lower(): _tachi_source_id(extension_name, lang) for lang in langs}
+    _attach_language_ids(mapping, {lang: _tachi_source_id(extension_name, lang) for lang in langs})
+
+
+def _attach_language_ids(mapping, ids_by_lang):
+    by_lang = {lang.lower(): i for lang, i in ids_by_lang.items()}
     # Guards against a typo silently routing titles to the wrong source.
     assert set(by_lang.values()) == mapping.tachi_source_ids, mapping.name
     mapping.tachi_id_by_lang = by_lang
@@ -168,8 +174,8 @@ MANGADEX = SourceMapping(
     tachi_to_aidoku_chapter_id=_mangadex_chapter_id,
     aidoku_chapter_url_from_id=_mangadex_chapter_url,
     tachi_manga_url_override=lambda mid: f"/manga/{mid}",
-    tachi_chapter_url_override=lambda mid, cid: f"/chapter/{cid}",
-    aidoku_chapter_url_override=lambda mid, cid: f"https://mangadex.org/chapter/{cid}",
+    tachi_chapter_url_override=lambda mid, cid, _url: f"/chapter/{cid}",
+    aidoku_chapter_url_override=lambda mid, cid, _url: f"https://mangadex.org/chapter/{cid}",
 )
 
 
@@ -294,9 +300,9 @@ MANGAPLUS = SourceMapping(
     aidoku_manga_url_from_id=_mangaplus_manga_url,
     tachi_to_aidoku_chapter_id=_mangaplus_chapter_id,
     aidoku_chapter_url_from_id=_mangaplus_chapter_url,
-    tachi_chapter_url_override=lambda mid, cid: f"#/viewer/{cid}",
+    tachi_chapter_url_override=lambda mid, cid, _url: f"#/viewer/{cid}",
     aidoku_manga_url_override=lambda mid: f"https://mangaplus.shueisha.co.jp/titles/{mid}",
-    aidoku_chapter_url_override=lambda mid, cid: f"https://mangaplus.shueisha.co.jp/viewer/{cid}",
+    aidoku_chapter_url_override=lambda mid, cid, _url: f"https://mangaplus.shueisha.co.jp/viewer/{cid}",
     # Aidoku stores no chapter language for MangaPlus, but the title id's
     # first digit is the edition's language (MangaPlus' own Language enum + 1).
     lang_from_manga_id=lambda mid: _MANGAPLUS_LANG_BY_PREFIX.get(str(mid)[:1]),
@@ -421,9 +427,9 @@ ASURASCANS = SourceMapping(
     aidoku_manga_url_from_id=_asurascans_manga_url,
     tachi_to_aidoku_chapter_id=_asurascans_chapter_id,
     aidoku_chapter_url_from_id=_asurascans_chapter_url,
-    tachi_chapter_url_override=lambda mid, cid: f"/series/{mid}/chapter/{cid}",
+    tachi_chapter_url_override=lambda mid, cid, _url: f"/series/{mid}/chapter/{cid}",
     aidoku_manga_url_override=lambda mid: f"https://asurascans.com/comics/{mid}",
-    aidoku_chapter_url_override=lambda mid, cid: f"https://asurascans.com/comics/{mid}/chapter/{cid}",
+    aidoku_chapter_url_override=lambda mid, cid, _url: f"https://asurascans.com/comics/{mid}/chapter/{cid}",
 )
 
 
@@ -467,10 +473,89 @@ _attach_languages(MANGADEX, "MangaDex", [
 _attach_languages(MANGAPLUS, "MANGA Plus by SHUEISHA", ["de", "en", "es", "fr", "id", "pt-BR", "ru", "th", "vi"])
 _attach_languages(MANGAFIRE, "MangaFire", ["en", "es", "es-419", "fr", "ja", "pt", "pt-BR"])
 
+# MangaDot (mangadot.net). Manga ids are identical in both apps; Mihon keeps
+# each chapter as a small JSON blob around the same numeric id Aidoku uses
+# (verified on real paired exports: 118/118, 208/208, 14/14 chapter ids).
+def _mangadot_chapter_id(tachi_chapter_url: str) -> str:
+    try:
+        return str(json.loads(tachi_chapter_url)["id"])
+    except (ValueError, KeyError, TypeError):
+        raise ValueError(f"unrecognized MangaDot chapter url: {tachi_chapter_url}")
+
+
+def _mangadot_tachi_chapter_url(mid, cid, aidoku_url=None) -> str:
+    source = (parse_qs(urlparse(aidoku_url or "").query).get("source") or ["user"])[0]
+    # Byte-exact with the extension's own serialisation, which Mihon matches on.
+    return json.dumps({"id": str(cid), "source": source, "isVolume": False}, separators=(",", ":"))
+
+
+def _mangadot_aidoku_chapter_url(mid, cid, tachi_url=None) -> str:
+    try:
+        source = json.loads(tachi_url).get("source") or "user"
+    except (ValueError, TypeError, AttributeError):
+        source = "user"
+    return f"https://mangadot.net/chapter/{cid}?source={source}"
+
+
+MANGADOT = SourceMapping(
+    name="MangaDot",
+    tachi_source_ids=set(),  # filled from the language table below
+    aidoku_id="multi.mangadotnet",
+    tachi_to_aidoku_manga_id=lambda url: url,
+    aidoku_manga_url_from_id=lambda mid, url="": str(mid),
+    tachi_to_aidoku_chapter_id=_mangadot_chapter_id,
+    aidoku_chapter_url_from_id=lambda cid: _mangadot_tachi_chapter_url(None, cid),
+    tachi_chapter_url_override=_mangadot_tachi_chapter_url,
+    aidoku_manga_url_override=lambda mid: f"https://mangadot.net/manga/{mid}",
+    aidoku_chapter_url_override=_mangadot_aidoku_chapter_url,
+)
+# Per-language source ids straight from the Keiyoushi index (index.pb,
+# extension v1.6.23) - not all of them follow the usual md5 id scheme.
+_MANGADOT_TACHI_ID_BY_LANG = {
+    "ab": 4735885360393755385, "af": 626361877295636066, "am": 1214640310680383515,
+    "ar": 5133570518916566066, "az": 8740468699151734392, "be": 6349207918477337222,
+    "bg": 4621039982977056475, "bn": 4728703871864086205, "bs": 2106727426891515868,
+    "ca": 4126429070202050423, "ceb": 1104434747623062236, "cs": 182506561627032263,
+    "cv": 466560170889971500, "da": 522919629093846860, "de": 1739134904773959471,
+    "el": 6280808899001059050, "en": 5900936305360403385, "eo": 3900938574086240284,
+    "es": 1356109540530417190, "es-419": 5046796980408019790, "et": 7085366320872721673,
+    "eu": 2365190675047124388, "fa": 6840185760082019759, "fi": 7568879765052968178,
+    "fo": 403504858442756278, "fr": 6544312035114371248, "ga": 1990999442874191049,
+    "gl": 9161576604389142963, "gn": 2649563537157849825, "gu": 7777361906352556467,
+    "ha": 7370016116750489216, "he": 7524478288761759786, "hi": 4686432307246610016,
+    "hr": 6919139667129890361, "ht": 4906990011623468194, "hu": 2744567066632059507,
+    "hy": 3389751853142685462, "id": 8591108444263884327, "ig": 1212617635525738382,
+    "is": 7457818185508918624, "it": 8788147393700258423, "ja": 2305771977147956314,
+    "jv": 2450590764399511282, "ka": 7781185259229560796, "kk": 3501653098098324330,
+    "km": 6558905765171140287, "kn": 735891950196570992, "ko": 8733946525904795862,
+    "ku": 642272481774520917, "ky": 6432074668689969261, "la": 5980076819966447323,
+    "lb": 7371980305504255093, "lo": 2817234851765014214, "lt": 3456620422576095825,
+    "lv": 6496021153361901915, "mg": 3095899732404101103, "mi": 1243113298307153697,
+    "mk": 3378671539429193821, "ml": 2065097680931770063, "mn": 9192319104809604483,
+    "mo": 4385496560007026082, "mr": 2403752440512665902, "ms": 2379671138411944871,
+    "mt": 763520574319176694, "my": 8689086897953658974, "ne": 1388001857060182903,
+    "nl": 5339181991315919474, "no": 2111970709663576933, "ny": 5594683159745082451,
+    "pl": 516446519459282312, "ps": 852113960420602047, "pt": 1374245104599191336,
+    "pt-BR": 6883842335519142390, "rm": 7682832424883392487, "ro": 7223291528565862680,
+    "ru": 8911989140118399619, "sd": 4791489272679823459, "sh": 5247335489585035333,
+    "si": 5151209771353483688, "sk": 906841171861851373, "sl": 4524523410546767783,
+    "sm": 6438885774622850088, "sn": 667651300545386994, "so": 3424023259825994677,
+    "sq": 5004953853361383266, "sr": 2958846473073557482, "ss": 9084839605166631973,
+    "st": 1437553406755071980, "sv": 4958143963089747877, "sw": 5128179410899824788,
+    "ta": 1532736845269879240, "te": 8979608222684527323, "tg": 3300379104794255539,
+    "th": 8348427309728988846, "ti": 2687394203984331406, "tk": 8728081113036876931,
+    "tl": 5536176722691621839, "to": 5231909047029777422, "tr": 5964430973280552505,
+    "uk": 3578850460057110410, "ur": 7589823463254376799, "uz": 5601626490491985162,
+    "vi": 3741155905873931805, "yo": 4921151708715305490, "zh": 4593442970144109426,
+    "zh-Hant": 2076066796458496830, "zh-tw": 7865090004429530491, "zu": 2441838299826051230,
+}
+MANGADOT.tachi_source_ids = set(_MANGADOT_TACHI_ID_BY_LANG.values())
+_attach_language_ids(MANGADOT, _MANGADOT_TACHI_ID_BY_LANG)
+
 REGISTRY = [
     MANGADEX, COMIX, MANGAPLUS, MANGAFIRE,
     ASURASCANS, MANGAKAKALOT, TCBSCANS, WEEBCENTRAL,
-    BATCAVE, READCOMICSONLINE,
+    BATCAVE, READCOMICSONLINE, MANGADOT,
 ]
 
 BY_TACHI_SOURCE_ID = {}

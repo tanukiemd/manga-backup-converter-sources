@@ -55,6 +55,10 @@ _FIXTURE_URLS = {
         "manga": "/manga/test-batcave-manga",
         "chapter": "/manga/test-batcave-manga/chapter-1",
     },
+    "MangaDot": {
+        "manga": "41",
+        "chapter": '{"id":"1893872","source":"user","isVolume":false}',
+    },
     "Read Comics Online": {
         "manga": "/comic/test-readcomicsonline-manga",
         "chapter": "/comic/test-readcomicsonline-manga/chapter-1",
