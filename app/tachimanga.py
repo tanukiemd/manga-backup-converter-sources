@@ -44,6 +44,10 @@ def read_tmb(tmb_bytes: bytes):
 def _read_mangas(conn):
     cur = conn.cursor()
     cats_by_id = {r["id"]: r["name"] for r in cur.execute("SELECT id, name FROM Category")}
+    try:
+        source_names = {r["id"]: r["name"] for r in cur.execute("SELECT id, name FROM Source")}
+    except sqlite3.Error:
+        source_names = {}
     cat_names_by_manga = {}
     for r in cur.execute("SELECT manga, category FROM CategoryManga"):
         cat_names_by_manga.setdefault(r["manga"], []).append(cats_by_id.get(r["category"]))
@@ -61,6 +65,7 @@ def _read_mangas(conn):
                 date_upload_ms=plausible_ms(c["date_upload"]),
                 chapter_number=c["chapter_number"], source_order=c["source_order"],
                 last_modified_s=(c["update_at"] // 1000) if c["update_at"] else None,
+                bookmark=bool(c["bookmark"]) if "bookmark" in c.keys() else False,
             ))
             url_by_chapter_id[c["id"]] = c["url"]
         history = []
@@ -73,8 +78,16 @@ def _read_mangas(conn):
                 last_read_ms=plausible_ms((h["last_read_at"] or 0) * 1000) or 0, read_duration=h["read_duration"] or 0,
             ))
         tracking = []
-        for t in sub.execute("SELECT * FROM TrackRecord WHERE manga_id = ? AND sync_id = 2", (m["id"],)).fetchall():
-            tracking.append(TachiTrack(sync_id=2, media_id=t["remote_id"], title=t["title"]))
+        for t in sub.execute("SELECT * FROM TrackRecord WHERE manga_id = ?", (m["id"],)).fetchall():
+            if "is_delete" in t.keys() and t["is_delete"]:
+                continue  # soft-deleted: the user removed this tracker
+            tracking.append(TachiTrack(
+                sync_id=t["sync_id"], media_id=t["remote_id"], title=t["title"],
+                library_id=t["library_id"], tracking_url=t["remote_url"] or "",
+                last_chapter_read=t["last_chapter_read"] or 0.0, total_chapters=t["total_chapters"] or 0,
+                score=t["score"] or 0.0, status=t["status"] or 0,
+                started_ms=t["start_date"] or 0, finished_ms=t["finish_date"] or 0,
+            ))
 
         mangas.append(TachiManga(
             source_id=m["source"], url=m["url"], title=m["title"],
@@ -84,6 +97,7 @@ def _read_mangas(conn):
             date_added_ms=plausible_ms((m["in_library_at"] or 0) * 1000),
             categories=[c for c in cat_names_by_manga.get(m["id"], []) if c],
             chapters=chapters, history=history, tracking=tracking,
+            source_name=source_names.get(m["source"]),
         ))
     return mangas
 
@@ -169,10 +183,10 @@ def _merge_mangas(conn, new_mangas):
         for ch in manga.chapters:
             cur.execute(
                 "INSERT INTO Chapter (url, name, date_upload, chapter_number, scanlator, "
-                "read, last_page_read, source_order, manga, create_at, update_at, dirty) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,1)",
+                "read, bookmark, last_page_read, source_order, manga, create_at, update_at, dirty) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
                 (ch.url, ch.name, ch.date_upload_ms or 0, ch.chapter_number or -1.0,
-                 ch.scanlator, int(ch.read), ch.last_page_read or 0, ch.source_order,
+                 ch.scanlator, int(ch.read), int(ch.bookmark), ch.last_page_read or 0, ch.source_order,
                  manga_id, now_ms, now_ms),
             )
             chapter_id_by_url[ch.url] = cur.lastrowid
@@ -203,14 +217,14 @@ def _merge_mangas(conn, new_mangas):
             )
 
         for t in manga.tracking:
-            if t.sync_id != 2:
-                continue
             cur.execute(
-                "INSERT INTO TrackRecord (manga_id, sync_id, remote_id, title, "
+                "INSERT INTO TrackRecord (manga_id, sync_id, remote_id, library_id, title, "
                 "last_chapter_read, total_chapters, status, score, remote_url, "
                 "start_date, finish_date, create_at, update_at, dirty) "
-                "VALUES (?,?,?,?,0,0,0,0,'',0,0,?,?,1)",
-                (manga_id, t.sync_id, t.media_id, t.title, now_ms, now_ms),
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                (manga_id, t.sync_id, t.media_id, t.library_id, t.title or manga.title,
+                 t.last_chapter_read or 0.0, t.total_chapters or 0, t.status or 0, t.score or 0.0,
+                 t.tracking_url or "", t.started_ms or 0, t.finished_ms or 0, now_ms, now_ms),
             )
 
     return report

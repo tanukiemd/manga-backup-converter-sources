@@ -22,6 +22,7 @@ class TachiChapter:
     chapter_number: float = None
     source_order: int = 0
     last_modified_s: int = None
+    bookmark: bool = False
 
 
 @dataclass
@@ -33,9 +34,19 @@ class TachiHistoryEntry:
 
 @dataclass
 class TachiTrack:
-    sync_id: int  # 2 = AniList
+    # Tachiyomi tracker ids (1 MyAnimeList, 2 AniList, 3 Kitsu, 7 MangaUpdates,
+    # ...) - Tachimanga uses the same ones. Aidoku only gets AniList.
+    sync_id: int
     media_id: int
     title: str
+    library_id: int = None
+    tracking_url: str = ""
+    last_chapter_read: float = 0.0
+    total_chapters: int = 0
+    score: float = 0.0
+    status: int = 0
+    started_ms: int = 0
+    finished_ms: int = 0
 
 
 @dataclass
@@ -54,3 +65,4 @@ class TachiManga:
     chapters: list = field(default_factory=list)
     history: list = field(default_factory=list)
     tracking: list = field(default_factory=list)
+    source_name: str = None  # as stored in the backup itself, if it says

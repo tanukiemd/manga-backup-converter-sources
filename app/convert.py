@@ -65,7 +65,8 @@ class ConversionReport:
         self.history_added = 0
         self.errors = []
         # Not part of as_dict()/the user-facing report - internal bookkeeping
-        # for the anonymous "which sources are people asking for" counter.
+        # for the anonymous "which sources are people asking for" counter:
+        # one (source_id, source_name_or_None) per skipped title.
         self.unmapped_source_ids = []
 
     def as_dict(self):
@@ -89,6 +90,11 @@ def _reencode_tuple(field, wire, value):
     if wire == 1:
         return pb.enc_tag(field, 1) + value
     raise ValueError(f"unsupported wire type {wire}")
+
+
+def _pb_float(d, field):
+    v = d.get(field)
+    return pb.as_float(v[0]) if v and isinstance(v[0], bytes) and len(v[0]) == 4 else 0.0
 
 
 def _split_title(name):
@@ -118,11 +124,15 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
     raw = bounded_gzip_decompress(tachibk_bytes)
     top = pb.parse(raw)
 
-    catname_by_order = {}
+    catname_by_order, source_names = {}, {}
     for f, w, v in top:
         if f == 2:
             d = pb.to_dict(v)
             catname_by_order[pb.g1(d, 2, 0)] = pb.as_str(d[1][0])
+        elif f == 101:  # BackupSource: name=1, sourceId=2
+            d = pb.to_dict(v)
+            if d.get(1):
+                source_names[pb.g1(d, 2, 0)] = pb.as_str(d[1][0])
 
     mangas = []
     for f, w, v in top:
@@ -148,6 +158,7 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
                 chapter_number=pb.as_float(c[9][0]) if c.get(9) else None,
                 source_order=pb.g1(c, 10, 0),
                 last_modified_s=pb.g1(c, 11),
+                bookmark=bool(pb.g1(c, 5, 0)),
             ))
             if read or page:
                 h = hist_by_url.get(u)
@@ -161,13 +172,22 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
         tracking = []
         for t in d.get(18, []):
             t = pb.to_dict(t)
-            if pb.g1(t, 1) == 2:
-                media_id = pb.g1(t, 100) or pb.g1(t, 3)
-                if media_id is not None:
-                    tracking.append(TachiTrack(
-                        sync_id=2, media_id=media_id,
-                        title=pb.as_str(t[5][0]) if t.get(5) else pb.as_str(d[3][0]),
-                    ))
+            sync_id = pb.g1(t, 1)
+            media_id = pb.g1(t, 100) or pb.g1(t, 3)
+            if sync_id is None or media_id is None:
+                continue
+            tracking.append(TachiTrack(
+                sync_id=sync_id, media_id=media_id,
+                title=pb.as_str(t[5][0]) if t.get(5) else pb.as_str(d[3][0]),
+                library_id=pb.g1(t, 2),
+                tracking_url=pb.as_str(t[4][0]) if t.get(4) else "",
+                last_chapter_read=_pb_float(t, 6),
+                total_chapters=pb.g1(t, 7, 0),
+                score=_pb_float(t, 8),
+                status=pb.g1(t, 9, 0),
+                started_ms=plausible_ms(pb.g1(t, 10)) or 0,
+                finished_ms=plausible_ms(pb.g1(t, 11)) or 0,
+            ))
 
         mangas.append(TachiManga(
             source_id=pb.g1(d, 1, 0), url=pb.as_str(d[2][0]), title=pb.as_str(d[3][0]),
@@ -180,6 +200,7 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
             date_added_ms=plausible_ms(pb.g1(d, 13)),
             categories=[catname_by_order[c] for c in d.get(17, []) if c in catname_by_order],
             chapters=chapters, history=history, tracking=tracking,
+            source_name=source_names.get(pb.g1(d, 1, 0)),
         ))
     return mangas
 
@@ -246,6 +267,8 @@ def write_into_tachibk(target_tachibk_bytes: bytes, mangas: list):
             if ch.scanlator:
                 cbuf += pb.enc_str_field(3, ch.scanlator)
             cbuf += pb.enc_varint_field(4, 1 if ch.read else 0)
+            if ch.bookmark:
+                cbuf += pb.enc_varint_field(5, 1)
             if ch.last_page_read:
                 cbuf += pb.enc_varint_field(6, ch.last_page_read)
             if ch.date_upload_ms:
@@ -267,13 +290,29 @@ def write_into_tachibk(target_tachibk_bytes: bytes, mangas: list):
             buf += pb.enc_varint_field(17, cat_order)
 
         for t in manga.tracking:
-            if t.sync_id != 2:
-                continue
-            tbuf = pb.enc_varint_field(1, 2) + pb.enc_str_field(5, t.title)
             try:
-                tbuf += pb.enc_varint_field(100, int(t.media_id))
+                media_id = int(t.media_id)
             except (TypeError, ValueError):
-                pass
+                continue
+            tbuf = pb.enc_varint_field(1, t.sync_id)
+            if t.library_id:
+                tbuf += pb.enc_varint_field(2, t.library_id)
+            if t.tracking_url:
+                tbuf += pb.enc_str_field(4, t.tracking_url)
+            tbuf += pb.enc_str_field(5, t.title or manga.title)
+            if t.last_chapter_read:
+                tbuf += pb.enc_float_field(6, float(t.last_chapter_read))
+            if t.total_chapters:
+                tbuf += pb.enc_varint_field(7, t.total_chapters)
+            if t.score:
+                tbuf += pb.enc_float_field(8, float(t.score))
+            if t.status:
+                tbuf += pb.enc_varint_field(9, t.status)
+            if t.started_ms:
+                tbuf += pb.enc_varint_field(10, t.started_ms)
+            if t.finished_ms:
+                tbuf += pb.enc_varint_field(11, t.finished_ms)
+            tbuf += pb.enc_varint_field(100, media_id)
             buf += pb.enc_message(18, bytes(tbuf))
 
         new_manga_blobs.append(pb.enc_message(1, bytes(buf)))
@@ -289,8 +328,9 @@ def write_into_tachibk(target_tachibk_bytes: bytes, mangas: list):
 # .aib (Aidoku)
 # ---------------------------------------------------------------------------
 
-def read_aidoku(aib_bytes: bytes):
-    """Returns (list[TachiManga], skipped_titles)."""
+def read_aidoku(aib_bytes: bytes, unmapped: list = None):
+    """Returns (list[TachiManga], skipped_titles). If given, `unmapped` gets
+    one (aidoku_source_id, name) per title skipped for lack of a mapping."""
     AI = plistlib.loads(aib_bytes)
     lib_by_key = {(l["sourceId"], l["mangaId"]): l for l in AI.get("library", [])}
     chapters_by_manga = defaultdict(list)
@@ -309,6 +349,8 @@ def read_aidoku(aib_bytes: bytes):
         mapping = BY_AIDOKU_ID.get(m["sourceId"])
         if mapping is None:
             skipped.append(title)
+            if unmapped is not None:
+                unmapped.append((m["sourceId"], None))
             continue
 
         manga_chapters = chapters_by_manga.get((m["sourceId"], m["id"]), [])
@@ -405,7 +447,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
         mapping = BY_TACHI_SOURCE_ID.get(manga.source_id)
         if mapping is None:
             report.manga_skipped_no_source.append(manga.title)
-            report.unmapped_source_ids.append(manga.source_id)
+            report.unmapped_source_ids.append((manga.source_id, manga.source_name))
             continue
 
         try:
@@ -592,6 +634,7 @@ def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, ta
     if source_app == target_app:
         raise ValueError("Source and target app must be different.")
 
+    aidoku_unmapped = []
     try:
         if source_app == "tachiyomi":
             mangas = read_tachibk(source_bytes)
@@ -600,7 +643,7 @@ def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, ta
             mangas, _ = tm.read_tmb(source_bytes)
             skipped = []
         elif source_app == "aidoku":
-            mangas, skipped = read_aidoku(source_bytes)
+            mangas, skipped = read_aidoku(source_bytes, aidoku_unmapped)
         else:
             raise ValueError(f"unknown source app {source_app}")
     except _STRUCTURE_ERRORS as e:
@@ -619,6 +662,7 @@ def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, ta
         _reraise_as_format_error(target_app, e)
 
     report.manga_skipped_no_source = skipped + report.manga_skipped_no_source
+    report.unmapped_source_ids = aidoku_unmapped + report.unmapped_source_ids
     return out_bytes, report
 
 
