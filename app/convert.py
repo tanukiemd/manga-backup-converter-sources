@@ -506,8 +506,10 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                 entry["scanlator"] = ch.scanlator
             entry["url"] = mapping.aidoku_chapter_url(mid, cid, ch.url)
             entry["lang"] = chapter_lang
-            if ch.chapter_number is not None:
-                entry["chapter"] = ch.chapter_number
+            # Aidoku stores chapter numbers as reals and leaves unknown ones out;
+            # Tachimanga keeps whole numbers as integers and -1 for "unknown".
+            if ch.chapter_number is not None and ch.chapter_number >= 0:
+                entry["chapter"] = float(ch.chapter_number)
             if vol is not None:
                 entry["volume"] = vol
             if ch.date_upload_ms:
@@ -520,19 +522,28 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
 
         lastread, lastchap = None, None
         chapter_by_url = {ch.url: ch for ch in manga.chapters}
-        for h in manga.history:
+        read_ms_by_url = {h.chapter_url: h.last_read_ms for h in manga.history}
+        # Aidoku derives "read" purely from history, but Tachimanga keeps one
+        # history row per title and Mihon none for chapters only marked as
+        # read - so every read or started chapter needs its own entry.
+        history_urls = list(dict.fromkeys(
+            [h.chapter_url for h in manga.history]
+            + [ch.url for ch in manga.chapters if ch.read or ch.last_page_read]))
+        for url in history_urls:
             try:
-                cid = mapping.tachi_to_aidoku_chapter_id(h.chapter_url)
+                cid = mapping.tachi_to_aidoku_chapter_id(url)
             except Exception:
                 continue
-            when = _ms_to_dt(h.last_read_ms) if h.last_read_ms else None
-            if when and (lastread is None or when > lastread):
+            ch = chapter_by_url.get(url)
+            when_ms = (read_ms_by_url.get(url) or (ch.last_read_ms if ch else None)
+                       or (ch.date_upload_ms if ch else None))
+            when = _ms_to_dt(when_ms) if when_ms else None
+            if when and url in read_ms_by_url and (lastread is None or when > lastread):
                 lastread = when
             if (sid, mid, cid) in have_hist:
                 continue
             # History also exists for chapters that were only opened part-way;
             # writing those as completed would mark them read in Aidoku.
-            ch = chapter_by_url.get(h.chapter_url)
             completed = ch.read if ch is not None else True
             new["history"].append({
                 "dateRead": when or dt.datetime.now(UTC).replace(tzinfo=None),

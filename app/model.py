@@ -23,6 +23,7 @@ class TachiChapter:
     source_order: int = 0
     last_modified_s: int = None
     bookmark: bool = False
+    last_read_ms: int = None  # per-chapter read time, where the app keeps one (Tachimanga)
 
 
 @dataclass

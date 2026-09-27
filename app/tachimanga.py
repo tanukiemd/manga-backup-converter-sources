@@ -66,6 +66,7 @@ def _read_mangas(conn):
                 chapter_number=c["chapter_number"], source_order=c["source_order"],
                 last_modified_s=(c["update_at"] // 1000) if c["update_at"] else None,
                 bookmark=bool(c["bookmark"]) if "bookmark" in c.keys() else False,
+                last_read_ms=plausible_ms((c["last_read_at"] or 0) * 1000) if "last_read_at" in c.keys() else None,
             ))
             url_by_chapter_id[c["id"]] = c["url"]
         history = []
