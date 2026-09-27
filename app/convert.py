@@ -297,9 +297,10 @@ def write_into_tachibk(target_tachibk_bytes: bytes, mangas: list):
                 media_id = int(t.media_id)
             except (TypeError, ValueError):
                 continue
-            tbuf = pb.enc_varint_field(1, t.sync_id)
-            if t.library_id:
-                tbuf += pb.enc_varint_field(2, t.library_id)
+            # libraryId has no default in Mihon's BackupTracking, so it's a
+            # required field: leaving it out makes Mihon reject the whole file
+            # as corrupt. Its own exports always write it, even as 0.
+            tbuf = pb.enc_varint_field(1, t.sync_id) + pb.enc_varint_field(2, t.library_id or 0)
             if t.tracking_url:
                 tbuf += pb.enc_str_field(4, t.tracking_url)
             tbuf += pb.enc_str_field(5, t.title or manga.title)
