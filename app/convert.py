@@ -391,8 +391,10 @@ def read_aidoku(aib_bytes: bytes, unmapped: list = None):
                 continue
             if h.get("completed"):
                 read_urls.add(churl)
-            elif (h.get("progress") or 0) > 0:
-                page_by_url[churl] = h["progress"]
+            elif (h.get("progress") or 0) > 1:
+                # Aidoku stores the 1-based page number, Mihon/Tachimanga a
+                # 0-based page index; page 1 means "not started" either way.
+                page_by_url[churl] = h["progress"] - 1
             history.append(TachiHistoryEntry(
                 chapter_url=churl,
                 last_read_ms=_dt_to_ms(h["dateRead"]) if h.get("dateRead") else 0,
@@ -557,7 +559,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             new["history"].append({
                 "dateRead": when or dt.datetime.now(UTC).replace(tzinfo=None),
                 "sourceId": sid, "chapterId": cid, "mangaId": mid,
-                "progress": -1 if completed else (ch.last_page_read or 0), "total": 0,
+                "progress": -1 if completed else (ch.last_page_read or 0) + 1, "total": 0,
                 "completed": completed,
             })
             have_hist.add((sid, mid, cid))
