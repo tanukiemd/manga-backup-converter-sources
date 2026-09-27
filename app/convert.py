@@ -44,6 +44,18 @@ def _sec_to_dt(x):
     return dt.datetime.fromtimestamp(x, UTC).replace(tzinfo=None)
 
 
+_MAX_PLAUSIBLE_MS = 4_102_444_800_000  # 2100-01-01
+
+
+def plausible_ms(x):
+    """Timestamps come straight from user backups; a single -1 (which decodes
+    as a huge unsigned varint) used to abort the whole conversion with
+    "year out of range". Treat anything outside 1970-2100 as missing."""
+    if isinstance(x, (int, float)) and 0 < x < _MAX_PLAUSIBLE_MS:
+        return int(x)
+    return None
+
+
 class ConversionReport:
     def __init__(self):
         self.manga_converted = []
@@ -132,7 +144,7 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
                 url=u, name=pb.as_str(c[2][0]),
                 scanlator=pb.as_str(c[3][0]) if c.get(3) else None,
                 read=read, last_page_read=page,
-                date_upload_ms=pb.g1(c, 8),
+                date_upload_ms=plausible_ms(pb.g1(c, 8)),
                 chapter_number=pb.as_float(c[9][0]) if c.get(9) else None,
                 source_order=pb.g1(c, 10, 0),
                 last_modified_s=pb.g1(c, 11),
@@ -142,7 +154,7 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
                 when_ms = (pb.g1(h, 2) if h and pb.g1(h, 2) else
                            (pb.g1(c, 11) * 1000 if pb.g1(c, 11) else pb.g1(c, 7)))
                 history.append(TachiHistoryEntry(
-                    chapter_url=u, last_read_ms=when_ms or 0,
+                    chapter_url=u, last_read_ms=plausible_ms(when_ms) or 0,
                     read_duration=pb.g1(h, 3, 0) if h else 0,
                 ))
 
@@ -165,7 +177,7 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
             genres=[pb.as_str(x) for x in d.get(7, [])],
             status=pb.g1(d, 8, 0),
             thumbnail_url=pb.as_str(d[9][0]) if d.get(9) else None,
-            date_added_ms=pb.g1(d, 13),
+            date_added_ms=plausible_ms(pb.g1(d, 13)),
             categories=[catname_by_order[c] for c in d.get(17, []) if c in catname_by_order],
             chapters=chapters, history=history, tracking=tracking,
         ))

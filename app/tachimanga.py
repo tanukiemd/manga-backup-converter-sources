@@ -21,6 +21,7 @@ import zipfile
 from pathlib import Path
 
 from .model import TachiManga, TachiChapter, TachiHistoryEntry, TachiTrack
+from .convert import plausible_ms
 from .safety import bounded_zip_read, temp_sqlite
 
 
@@ -57,7 +58,7 @@ def _read_mangas(conn):
             chapters.append(TachiChapter(
                 url=c["url"], name=c["name"], scanlator=c["scanlator"],
                 read=bool(c["read"]), last_page_read=c["last_page_read"],
-                date_upload_ms=c["date_upload"] or None,
+                date_upload_ms=plausible_ms(c["date_upload"]),
                 chapter_number=c["chapter_number"], source_order=c["source_order"],
                 last_modified_s=(c["update_at"] // 1000) if c["update_at"] else None,
             ))
@@ -69,7 +70,7 @@ def _read_mangas(conn):
                 continue
             history.append(TachiHistoryEntry(
                 chapter_url=chapter_url,
-                last_read_ms=(h["last_read_at"] or 0) * 1000, read_duration=h["read_duration"] or 0,
+                last_read_ms=plausible_ms((h["last_read_at"] or 0) * 1000) or 0, read_duration=h["read_duration"] or 0,
             ))
         tracking = []
         for t in sub.execute("SELECT * FROM TrackRecord WHERE manga_id = ? AND sync_id = 2", (m["id"],)).fetchall():
@@ -80,7 +81,7 @@ def _read_mangas(conn):
             artist=m["artist"], author=m["author"], description=m["description"],
             genres=[g.strip() for g in (m["genre"] or "").split(",") if g.strip()],
             status=m["status"], thumbnail_url=m["thumbnail_url"],
-            date_added_ms=(m["in_library_at"] * 1000) if m["in_library_at"] else None,
+            date_added_ms=plausible_ms((m["in_library_at"] or 0) * 1000),
             categories=[c for c in cat_names_by_manga.get(m["id"], []) if c],
             chapters=chapters, history=history, tracking=tracking,
         ))

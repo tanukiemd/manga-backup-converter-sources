@@ -2,8 +2,8 @@
 
 The open-source conversion engine and source-ID mapping tables behind
 [chococornet.moe/convert](https://chococornet.moe/convert/) - a free tool to
-convert manga library backups between **Tachiyomi / Mihon / Komikku**,
-**Tachimanga** and **Aidoku**, keeping read progress, categories and tracking.
+convert manga, manhua and manhwa library backups between **Tachiyomi / Mihon / Komikku**,
+**Tachimanga** and **Aidoku**, keeping read progress, categories and AniList tracking.
 
 This repo has the engine plus a few CLI wrappers around it:
 
