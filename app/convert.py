@@ -158,7 +158,8 @@ def read_tachibk(tachibk_bytes: bytes) -> list:
                 scanlator=pb.as_str(c[3][0]) if c.get(3) else None,
                 read=read, last_page_read=page,
                 date_upload_ms=plausible_ms(pb.g1(c, 8)),
-                chapter_number=pb.as_float(c[9][0]) if c.get(9) else None,
+                # 0.0 is the proto default, so Mihon leaves chapter 0 out entirely.
+                chapter_number=pb.as_float(c[9][0]) if c.get(9) else 0.0,
                 source_order=pb.g1(c, 10, 0),
                 last_modified_s=pb.g1(c, 11),
                 bookmark=bool(pb.g1(c, 5, 0)),
