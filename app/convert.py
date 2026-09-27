@@ -15,6 +15,7 @@ fields in both Aidoku's and Tachiyomi's backup schemas).
 """
 import gzip
 import re
+import struct
 import datetime as dt
 from collections import defaultdict
 
@@ -98,6 +99,13 @@ def _reencode_tuple(field, wire, value):
 def _pb_float(d, field):
     v = d.get(field)
     return pb.as_float(v[0]) if v and isinstance(v[0], bytes) and len(v[0]) == 4 else 0.0
+
+
+def _float32(x) -> float:
+    """Aidoku decodes chapter/volume numbers as 32-bit Floats and rejects the
+    whole backup ("corrupt backup") if a value isn't exactly representable -
+    e.g. 9.1 read from Tachimanga as a 64-bit double. Round like Aidoku does."""
+    return struct.unpack("<f", struct.pack("<f", float(x)))[0]
 
 
 def _split_title(name):
@@ -510,9 +518,9 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             # Aidoku stores chapter numbers as reals and leaves unknown ones out;
             # Tachimanga keeps whole numbers as integers and -1 for "unknown".
             if ch.chapter_number is not None and ch.chapter_number >= 0:
-                entry["chapter"] = float(ch.chapter_number)
+                entry["chapter"] = _float32(ch.chapter_number)
             if vol is not None:
-                entry["volume"] = vol
+                entry["volume"] = _float32(vol)
             if ch.date_upload_ms:
                 entry["dateUploaded"] = _ms_to_dt(ch.date_upload_ms)
             entry["locked"] = False
