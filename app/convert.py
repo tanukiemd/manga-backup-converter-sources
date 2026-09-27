@@ -68,6 +68,10 @@ class ConversionReport:
         self.chapters_added = 0
         self.history_added = 0
         self.errors = []
+        # MangaFire chapters whose legacy links carry no chapter id, grouped
+        # per title: {"title", "hid", "lang", "chapters": [{"url", "number"}]}.
+        # The result page can look their ids up from the visitor's browser.
+        self.legacy_chapters = []
         # Not part of as_dict()/the user-facing report - internal bookkeeping
         # for the anonymous "which sources are people asking for" counter:
         # one (source_id, source_name_or_None) per skipped title.
@@ -81,6 +85,7 @@ class ConversionReport:
             "chapters_added": self.chapters_added,
             "history_added": self.history_added,
             "errors": self.errors,
+            "legacy_chapters": self.legacy_chapters,
         }
 
 
@@ -503,11 +508,16 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             report.manga_already_present.append(manga.title)
 
         unmappable = 0
+        legacy = {}
         for ch in manga.chapters:
             try:
                 cid = mapping.tachi_to_aidoku_chapter_id(ch.url)
             except Exception:
                 unmappable += 1
+                m_legacy = _MANGAFIRE_LEGACY_CHAPTER.search(ch.url) if mapping.name == "MangaFire" else None
+                if m_legacy:
+                    legacy.setdefault(m_legacy.group(1), []).append(
+                        {"url": ch.url, "number": float(m_legacy.group(2))})
                 continue
             if (sid, mid, cid) in have_ch:
                 continue
@@ -532,6 +542,8 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             new["chapters"].append(entry)
             have_ch.add((sid, mid, cid))
             report.chapters_added += 1
+        for lang, chs in legacy.items():
+            report.legacy_chapters.append({"title": manga.title, "hid": mid, "lang": lang, "chapters": chs})
         if unmappable:
             # e.g. MangaFire's legacy "/read/<slug>/<lang>/chapter-N" links carry
             # no chapter id; refreshing the title in Mihon rewrites them to the
@@ -660,7 +672,14 @@ def _reraise_as_format_error(app_name: str, exc: Exception):
     ) from exc
 
 
-def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, target_app: str):
+# Legacy MangaFire chapter link: /read/<slug>.<hid>/<lang>/chapter-<number>
+_MANGAFIRE_LEGACY_CHAPTER = re.compile(r"^/read/[^/]+/([a-z]{2}(?:-[a-z]{2,3})?)/chapter-(\d+(?:\.\d+)?)$")
+
+
+def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, target_app: str,
+                   chapter_url_overrides: dict = None):
+    """chapter_url_overrides maps a source chapter url to a replacement, e.g.
+    a legacy MangaFire link to one carrying the chapter id looked up later."""
     from . import tachimanga as tm
 
     if source_app == target_app:
@@ -680,6 +699,13 @@ def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, ta
             raise ValueError(f"unknown source app {source_app}")
     except _STRUCTURE_ERRORS as e:
         _reraise_as_format_error(source_app, e)
+
+    if chapter_url_overrides:
+        for manga in mangas:
+            for ch in manga.chapters:
+                ch.url = chapter_url_overrides.get(ch.url, ch.url)
+            for h in manga.history:
+                h.chapter_url = chapter_url_overrides.get(h.chapter_url, h.chapter_url)
 
     try:
         if target_app == "tachiyomi":
