@@ -68,6 +68,16 @@ def compute_stats(data: bytes, app_name: str) -> dict:
     except _STRUCTURE_ERRORS as e:
         _reraise_as_format_error(app_name, e)
 
+    # The backup's own source list names sources we have no mapping for,
+    # instead of showing "Source #7537715367149829912".
+    native_readers = {"tachiyomi": _read_native_tachibk, "tachimanga": _read_native_tmb}
+    own_names = {}
+    if app_name in native_readers:
+        try:
+            own_names = {e.key[0]: e.source_name for e in native_readers[app_name](data)}
+        except _STRUCTURE_ERRORS:
+            pass
+
     total_manga = len(mangas)
     total_chapters_read = 0
     source_counter = Counter()
@@ -85,7 +95,10 @@ def compute_stats(data: bytes, app_name: str) -> dict:
             added_ts = (m.date_added_ms / 1000) if m.date_added_ms else None
             total_chapters_read += sum(1 for c in m.chapters if c.read)
 
-        source_counter[_source_label(app_name, source_key)] += 1
+        name = own_names.get(source_key)
+        if not name or name == str(source_key):
+            name = _source_label(app_name, source_key)
+        source_counter[name] += 1
         for g in genres:
             if g:
                 genre_counter[g] += 1

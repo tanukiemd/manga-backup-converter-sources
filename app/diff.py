@@ -13,9 +13,31 @@ def _read_any(app_name: str, data: bytes) -> list:
         mangas, _ = tm.read_tmb(data)
         return mangas
     elif app_name == "aidoku":
-        mangas, _ = convert.read_aidoku(data)
-        return mangas
+        return _read_aidoku_native(data)
     raise ValueError(f"unknown app {app_name}")
+
+
+def _read_aidoku_native(data: bytes) -> list:
+    """convert.read_aidoku() drops every title whose source has no
+    cross-app mapping (most of them) and translates keys, neither of which
+    makes sense when comparing two Aidoku backups with each other."""
+    import plistlib
+    from collections import defaultdict
+    from .model import TachiManga, TachiChapter
+    AI = plistlib.loads(data)
+    read_ids = {(h["sourceId"], h["mangaId"], h.get("chapterId"))
+                for h in AI.get("history", []) if h.get("completed")}
+    chapters = defaultdict(list)
+    for c in AI.get("chapters", []):
+        key = (c["sourceId"], c["mangaId"])
+        chapters[key].append(TachiChapter(url=c["id"], name=c.get("title") or "",
+                                          read=(key[0], key[1], c["id"]) in read_ids))
+    in_library = {(l["sourceId"], l["mangaId"]) for l in AI.get("library", [])}
+    return [
+        TachiManga(source_id=m["sourceId"], url=m["id"], title=m.get("title", "(untitled)"),
+                   chapters=chapters[(m["sourceId"], m["id"])])
+        for m in AI.get("manga", []) if not in_library or (m["sourceId"], m["id"]) in in_library
+    ]
 
 
 def compare_backups(bytes_a: bytes, bytes_b: bytes, app_name: str) -> dict:
