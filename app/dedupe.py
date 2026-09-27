@@ -24,11 +24,24 @@ from pathlib import Path
 from . import pb
 from .convert import _STRUCTURE_ERRORS, _reencode_tuple, _reraise_as_format_error
 from .safety import bounded_gzip_decompress, bounded_zip_read
+from .sources import REGISTRY
+
+# Fallback names for when a backup doesn't carry its own source list.
+_KNOWN_SOURCE_NAMES = {}
+for _m in REGISTRY:
+    for _sid in _m.tachi_source_ids:
+        _KNOWN_SOURCE_NAMES[_sid] = _m.name
+    _KNOWN_SOURCE_NAMES[_m.aidoku_id] = _m.name
+
+
+def _source_label(source_id, names: dict) -> str:
+    return names.get(source_id) or _KNOWN_SOURCE_NAMES.get(source_id) or str(source_id)
 
 
 class _NativeEntry:
-    def __init__(self, key, title, chapters_read, last_read_ms):
+    def __init__(self, key, title, chapters_read, last_read_ms, source_name=None):
         self.key = key
+        self.source_name = source_name
         self.title = title
         self.chapters_read = chapters_read
         self.last_read_ms = last_read_ms or 0
@@ -41,6 +54,12 @@ class _NativeEntry:
 def _read_native_tachibk(data: bytes) -> list:
     raw = bounded_gzip_decompress(data)
     top = pb.parse(raw)
+    names = {}
+    for f, w, v in top:
+        if f == 101:
+            s = pb.to_dict(v)
+            if 1 in s:
+                names[pb.g1(s, 2, 0)] = pb.as_str(s[1][0])
     entries = []
     for f, w, v in top:
         if f != 1:
@@ -52,9 +71,10 @@ def _read_native_tachibk(data: bytes) -> list:
         chapters_read = sum(1 for c in chs if bool(pb.g1(c, 4, 0)))
         hist = [pb.to_dict(h) for h in d.get(104, [])]
         last_read = max((pb.g1(h, 2, 0) or 0 for h in hist), default=0)
+        source_id = pb.g1(d, 1, 0)
         entries.append(_NativeEntry(
-            (pb.g1(d, 1, 0), pb.as_str(d[2][0])), pb.as_str(d[3][0]),
-            chapters_read, last_read,
+            (source_id, pb.as_str(d[2][0])), pb.as_str(d[3][0]),
+            chapters_read, last_read, _source_label(source_id, names),
         ))
     return entries
 
@@ -70,6 +90,10 @@ def _read_native_tmb(data: bytes) -> list:
         tmp_path = tmp.name
     conn = sqlite3.connect(tmp_path)
     conn.row_factory = sqlite3.Row
+    try:
+        names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM Source")}
+    except sqlite3.Error:
+        names = {}
     entries = []
     for m in conn.execute("SELECT * FROM Manga WHERE in_library = 1").fetchall():
         chapters_read = conn.execute(
@@ -78,7 +102,8 @@ def _read_native_tmb(data: bytes) -> list:
         last_read_s = conn.execute(
             "SELECT MAX(last_read_at) FROM History WHERE manga_id = ?", (m["id"],)
         ).fetchone()[0] or 0
-        entries.append(_NativeEntry((m["source"], m["url"]), m["title"], chapters_read, last_read_s * 1000))
+        entries.append(_NativeEntry((m["source"], m["url"]), m["title"], chapters_read, last_read_s * 1000,
+                                    _source_label(m["source"], names)))
     conn.close()
     Path(tmp_path).unlink(missing_ok=True)
     return entries
@@ -102,6 +127,7 @@ def _read_native_aib(data: bytes) -> list:
         entries.append(_NativeEntry(
             key, m.get("title", "(untitled)"),
             len(read_chapters.get(key, ())), last_read.get(key, 0),
+            _source_label(m["sourceId"], {}),
         ))
     return entries
 
@@ -205,7 +231,8 @@ def find_duplicates(data: bytes, app_name: str) -> dict:
         groups.append({
             "title": group[0].title,
             "entries": [
-                {"key": list(e.key), "chapters_read": e.chapters_read, "last_read_ms": e.last_read_ms}
+                {"key": list(e.key), "source": e.source_name, "chapters_read": e.chapters_read,
+                 "last_read_ms": e.last_read_ms}
                 for e in group
             ],
             "suggested_keeper": group.index(best),

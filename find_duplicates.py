@@ -69,7 +69,7 @@ def main():
         print(f"  {group['title']}")
         for i, e in enumerate(group["entries"]):
             marker = " <- keeping" if i == group["suggested_keeper"] else ""
-            print(f"    - {e['chapters_read']} chapters read{marker}")
+            print(f"    - {e['source']}: {e['chapters_read']} chapters read{marker}")
 
     if not args.apply:
         print("\nRun again with --apply --out cleaned<ext> to write a cleaned backup "
