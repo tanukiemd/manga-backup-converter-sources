@@ -17,25 +17,27 @@ from .model import TachiChapter, TachiManga
 from .sources import REGISTRY
 
 _FIXTURE_URLS = {
+    # MangaDex, MangaPlus and AsuraScans use the exact shapes found in a real
+    # Mihon export, and test_source_fixtures.py checks they round-trip exactly.
     "MangaDex": {
-        "manga": "https://mangadex.org/title/test-mangadex-0001",
-        "chapter": "https://mangadex.org/chapter/test-mangadex-ch-0001",
+        "manga": "/manga/b05918e4-fb1a-4b10-a919-eaecf00fd7dd",
+        "chapter": "/chapter/4df0e60d-5975-4a38-810d-747688b3ede7",
     },
     "Comix": {
         "manga": "test-comix-manga-123",
         "chapter": "https://comix.to/title/test-comix-manga-123/42-chapter-one",
     },
     "MangaPlus": {
-        "manga": "https://mangaplus.shueisha.co.jp/titles/100001",
-        "chapter": "https://mangaplus.shueisha.co.jp/viewer/1000001",
+        "manga": "#/titles/100171",
+        "chapter": "#/viewer/1001710",
     },
     "MangaFire": {
         "manga": "https://mangafire.to/manga/test-manga-abc123",
         "chapter": "https://mangafire.to/read/test-manga-abc123/en/10-chapter-ten",
     },
     "AsuraScans": {
-        "manga": "https://asuracomic.net/series/test-asura-manga",
-        "chapter": "https://asuracomic.net/series/test-asura-manga/chapter-1",
+        "manga": "/series/the-greatest-estate-developer",
+        "chapter": "/series/the-greatest-estate-developer/chapter/223",
     },
     "Mangakakalot": {
         "manga": "/manga/test-mangakakalot-manga",
@@ -71,7 +73,7 @@ def build_synthetic_mangas() -> list:
                 f"No synthetic fixture urls defined for source {mapping.name!r} - "
                 f"add one to app/fixtures.py._FIXTURE_URLS."
             )
-        source_id = next(iter(mapping.tachi_source_ids))
+        source_id = mapping.tachi_source_id_for_lang("en")
         chapter = TachiChapter(
             url=urls["chapter"], name="Chapter 1", read=False,
             chapter_number=1.0, source_order=0,

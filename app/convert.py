@@ -28,6 +28,9 @@ from .safety import bounded_gzip_decompress, DecompressionBombError
 UTC = dt.timezone.utc
 STATUS_TACHI_TO_AIDOKU = {1: 1, 2: 2, 4: 2, 5: 3, 6: 4}
 STATUS_AIDOKU_TO_TACHI = {1: 1, 2: 2, 3: 5, 4: 6}
+# Tachiyomi tracker ids <-> Aidoku trackerId (both seen in real exports).
+AIDOKU_TRACKER_BY_SYNC_ID = {1: "myanimelist", 2: "anilist"}
+SYNC_ID_BY_AIDOKU_TRACKER = {v: k for k, v in AIDOKU_TRACKER_BY_SYNC_ID.items()}
 
 
 def _ms_to_dt(x):
@@ -354,15 +357,13 @@ def read_aidoku(aib_bytes: bytes, unmapped: list = None):
             continue
 
         manga_chapters = chapters_by_manga.get((m["sourceId"], m["id"]), [])
-        langs = [c.get("lang") for c in manga_chapters if c.get("lang")]
-        main_lang = max(set(langs), key=langs.count) if langs else None
-        tachi_source_id = mapping.tachi_source_id_for_lang(main_lang)
-        tachi_url = mapping.aidoku_manga_url_from_id(m["id"], m.get("url", ""))
+        tachi_source_id = mapping.tachi_source_id_for_manga(m["id"], [c.get("lang") for c in manga_chapters])
+        tachi_url = mapping.tachi_manga_url(m["id"], m.get("url", ""))
         lib = lib_by_key.get((m["sourceId"], m["id"]))
 
         chapters, url_by_id = [], {}
         for c in manga_chapters:
-            churl = c.get("url") or mapping.aidoku_chapter_url_from_id(c["id"])
+            churl = mapping.tachi_chapter_url(m["id"], c["id"], c.get("url"))
             chapters.append(TachiChapter(
                 url=churl,
                 name=c.get("title") or f"Chapter {c.get('chapter', '')}".strip(),
@@ -393,13 +394,14 @@ def read_aidoku(aib_bytes: bytes, unmapped: list = None):
 
         tracking = []
         for t in track_by_manga.get((m["sourceId"], m["id"]), []):
-            if t.get("trackerId") != "anilist":
+            sync_id = SYNC_ID_BY_AIDOKU_TRACKER.get(t.get("trackerId"))
+            if sync_id is None:
                 continue
             try:
                 media_id = int(t["id"])
             except (KeyError, ValueError):
                 continue
-            tracking.append(TachiTrack(sync_id=2, media_id=media_id, title=t.get("title", title)))
+            tracking.append(TachiTrack(sync_id=sync_id, media_id=media_id, title=t.get("title", title)))
 
         mangas.append(TachiManga(
             source_id=tachi_source_id, url=tachi_url, title=title,
@@ -462,7 +464,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
         sid = mapping.aidoku_id
         key = (sid, mid)
         used_source_ids.add(sid)
-        chapter_lang = mapping.aidoku_lang_for(manga.source_id)
+        chapter_lang = mapping.aidoku_chapter_lang(manga.source_id)
         nsfw, gl = _nsfw_viewer(manga.genres)
         viewer = 4 if gl & {"manhwa", "manhua", "webtoon", "long strip"} else 1
 
@@ -477,10 +479,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             m["tags"] = manga.genres
             if manga.thumbnail_url:
                 m["cover"] = manga.thumbnail_url
-            if mapping.tachi_to_aidoku_manga_url is not None:
-                aidoku_url = mapping.tachi_to_aidoku_manga_url(manga.url, [c.url for c in manga.chapters])
-            else:
-                aidoku_url = mapping.aidoku_manga_url_from_id(mid)
+            aidoku_url = mapping.aidoku_manga_url(mid, manga.url, [c.url for c in manga.chapters])
             m.update({
                 "url": aidoku_url, "status": STATUS_TACHI_TO_AIDOKU.get(manga.status, 0),
                 "nsfw": nsfw, "viewer": viewer, "neverUpdate": False, "chapterFlags": 0, "editedKeys": 0,
@@ -504,7 +503,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                 entry["title"] = chtitle
             if ch.scanlator:
                 entry["scanlator"] = ch.scanlator
-            entry["url"] = ch.url
+            entry["url"] = mapping.aidoku_chapter_url(mid, cid, ch.url)
             entry["lang"] = chapter_lang
             if ch.chapter_number is not None:
                 entry["chapter"] = ch.chapter_number
@@ -574,13 +573,14 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                     all_categories.append(cn)
 
         for t in manga.tracking:
-            if t.sync_id != 2 or (sid, mid, "anilist") in have_trk:
+            tracker = AIDOKU_TRACKER_BY_SYNC_ID.get(t.sync_id)
+            if tracker is None or (sid, mid, tracker) in have_trk:
                 continue
             new["trackItems"].append({
-                "id": str(t.media_id), "trackerId": "anilist", "mangaId": mid, "sourceId": sid,
+                "id": str(t.media_id), "trackerId": tracker, "mangaId": mid, "sourceId": sid,
                 "title": t.title, "chapterOffset": 0,
             })
-            have_trk.add((sid, mid, "anilist"))
+            have_trk.add((sid, mid, tracker))
 
     for k in new:
         AI[k] = AI[k] + new[k]

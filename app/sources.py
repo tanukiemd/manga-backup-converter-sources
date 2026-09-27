@@ -17,7 +17,10 @@ class SourceMapping:
     def __init__(self, name, tachi_source_ids, aidoku_id,
                  tachi_to_aidoku_manga_id, aidoku_manga_url_from_id,
                  tachi_to_aidoku_chapter_id, aidoku_chapter_url_from_id,
-                 tachi_to_aidoku_manga_url=None):
+                 tachi_to_aidoku_manga_url=None,
+                 tachi_manga_url_override=None, tachi_chapter_url_override=None,
+                 aidoku_manga_url_override=None, aidoku_chapter_url_override=None,
+                 lang_from_manga_id=None, blank_chapter_lang=False):
         self.name = name
         self.tachi_source_ids = set(tachi_source_ids)
         self.aidoku_id = aidoku_id
@@ -33,6 +36,16 @@ class SourceMapping:
         # reconstruct the original tachi-side url later). Defaults to
         # aidoku_manga_url_from_id(id) when a source has no such info to lose.
         self.tachi_to_aidoku_manga_url = tachi_to_aidoku_manga_url
+        # Exact url shapes each app stores, where they differ (verified against
+        # real paired Mihon + Aidoku exports): the id carries across, the url
+        # around it doesn't - e.g. MangaDex is "/chapter/<id>" in Mihon but
+        # "https://mangadex.org/chapter/<id>" in Aidoku.
+        self.tachi_manga_url_override = tachi_manga_url_override
+        self.tachi_chapter_url_override = tachi_chapter_url_override
+        self.aidoku_manga_url_override = aidoku_manga_url_override
+        self.aidoku_chapter_url_override = aidoku_chapter_url_override
+        self.lang_from_manga_id = lang_from_manga_id
+        self.blank_chapter_lang = blank_chapter_lang
         # Filled in via _attach_languages() for sources that ship one
         # Tachiyomi sourceId per language but are a single Aidoku source.
         self.tachi_id_by_lang = {}
@@ -50,6 +63,37 @@ class SourceMapping:
             if candidate in self.tachi_id_by_lang:
                 return self.tachi_id_by_lang[candidate]
         return min(self.tachi_source_ids)
+
+    def tachi_manga_url(self, aidoku_id, aidoku_url=""):
+        if self.tachi_manga_url_override:
+            return self.tachi_manga_url_override(aidoku_id)
+        return self.aidoku_manga_url_from_id(aidoku_id, aidoku_url)
+
+    def tachi_chapter_url(self, aidoku_manga_id, aidoku_chapter_id, aidoku_chapter_url=None):
+        if self.tachi_chapter_url_override:
+            return self.tachi_chapter_url_override(aidoku_manga_id, aidoku_chapter_id)
+        return aidoku_chapter_url or self.aidoku_chapter_url_from_id(aidoku_chapter_id)
+
+    def aidoku_manga_url(self, aidoku_id, tachi_url, chapter_urls):
+        if self.aidoku_manga_url_override:
+            return self.aidoku_manga_url_override(aidoku_id)
+        if self.tachi_to_aidoku_manga_url is not None:
+            return self.tachi_to_aidoku_manga_url(tachi_url, chapter_urls)
+        return self.aidoku_manga_url_from_id(aidoku_id)
+
+    def aidoku_chapter_url(self, aidoku_manga_id, aidoku_chapter_id, tachi_chapter_url):
+        if self.aidoku_chapter_url_override:
+            return self.aidoku_chapter_url_override(aidoku_manga_id, aidoku_chapter_id)
+        return tachi_chapter_url
+
+    def tachi_source_id_for_manga(self, aidoku_manga_id, chapter_langs):
+        if self.lang_from_manga_id:
+            return self.tachi_source_id_for_lang(self.lang_from_manga_id(aidoku_manga_id))
+        langs = [l for l in chapter_langs if l]
+        return self.tachi_source_id_for_lang(max(set(langs), key=langs.count) if langs else None)
+
+    def aidoku_chapter_lang(self, tachi_source_id: int) -> str:
+        return "" if self.blank_chapter_lang else self.aidoku_lang_for(tachi_source_id)
 
     def aidoku_lang_for(self, tachi_source_id: int) -> str:
         lang = self.lang_by_tachi_id.get(tachi_source_id)
@@ -123,6 +167,9 @@ MANGADEX = SourceMapping(
     aidoku_manga_url_from_id=_mangadex_manga_url,
     tachi_to_aidoku_chapter_id=_mangadex_chapter_id,
     aidoku_chapter_url_from_id=_mangadex_chapter_url,
+    tachi_manga_url_override=lambda mid: f"/manga/{mid}",
+    tachi_chapter_url_override=lambda mid, cid: f"/chapter/{cid}",
+    aidoku_chapter_url_override=lambda mid, cid: f"https://mangadex.org/chapter/{cid}",
 )
 
 
@@ -218,6 +265,11 @@ def _mangaplus_chapter_url(aidoku_chapter_id: str) -> str:
     return f"#/viewer/{aidoku_chapter_id}"
 
 
+# Confirmed on real backups for 1 (en), 2 (es), 5 (pt-BR) and 8 (de).
+_MANGAPLUS_LANG_BY_PREFIX = {"1": "en", "2": "es", "3": "fr", "4": "id", "5": "pt-br",
+                             "6": "ru", "7": "th", "8": "de", "9": "vi"}
+
+
 # Tachiyomi/Mihon/Komikku ship one numeric sourceId PER LANGUAGE for MangaPlus
 # (en, es, fr, id, pt-BR, ru, th, vi, de - confirmed against the compiled
 # Keiyoushi extension index), while Aidoku's "multi.mangaplus" is a single
@@ -242,6 +294,13 @@ MANGAPLUS = SourceMapping(
     aidoku_manga_url_from_id=_mangaplus_manga_url,
     tachi_to_aidoku_chapter_id=_mangaplus_chapter_id,
     aidoku_chapter_url_from_id=_mangaplus_chapter_url,
+    tachi_chapter_url_override=lambda mid, cid: f"#/viewer/{cid}",
+    aidoku_manga_url_override=lambda mid: f"https://mangaplus.shueisha.co.jp/titles/{mid}",
+    aidoku_chapter_url_override=lambda mid, cid: f"https://mangaplus.shueisha.co.jp/viewer/{cid}",
+    # Aidoku stores no chapter language for MangaPlus, but the title id's
+    # first digit is the edition's language (MangaPlus' own Language enum + 1).
+    lang_from_manga_id=lambda mid: _MANGAPLUS_LANG_BY_PREFIX.get(str(mid)[:1]),
+    blank_chapter_lang=True,
 )
 
 def _mangafire_manga_id(tachi_url: str) -> str:
@@ -362,6 +421,9 @@ ASURASCANS = SourceMapping(
     aidoku_manga_url_from_id=_asurascans_manga_url,
     tachi_to_aidoku_chapter_id=_asurascans_chapter_id,
     aidoku_chapter_url_from_id=_asurascans_chapter_url,
+    tachi_chapter_url_override=lambda mid, cid: f"/series/{mid}/chapter/{cid}",
+    aidoku_manga_url_override=lambda mid: f"https://asurascans.com/comics/{mid}",
+    aidoku_chapter_url_override=lambda mid, cid: f"https://asurascans.com/comics/{mid}/chapter/{cid}",
 )
 
 
