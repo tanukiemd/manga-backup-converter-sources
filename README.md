@@ -142,7 +142,7 @@ that's often faster than reverse-engineering it yourself.
 
 People who've added a verified source mapping - thank you!
 
-- [@tanukiemd](https://github.com/tanukiemd) - initial mapping set (MangaDex, MangaFire, MangaPlus, Comix, AsuraScans, Mangakakalot, TCB Scans, Weeb Central, BatCave, Read Comics Online)
+- [@tanukiemd](https://github.com/tanukiemd) - initial mapping set (MangaDex, MangaFire, MangaPlus, Comix, AsuraScans, Mangakakalot, TCB Scans, Weeb Central, BatCave, Read Comics Online, MangaDot)
 
 Added a mapping? Add your line above in the same PR - GitHub handle and
 which source(s) you mapped.
