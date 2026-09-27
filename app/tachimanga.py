@@ -17,12 +17,11 @@ import hashlib
 import io
 import json
 import sqlite3
-import tempfile
 import zipfile
 from pathlib import Path
 
 from .model import TachiManga, TachiChapter, TachiHistoryEntry, TachiTrack
-from .safety import bounded_zip_read
+from .safety import bounded_zip_read, temp_sqlite
 
 
 def read_tmb(tmb_bytes: bytes):
@@ -33,15 +32,10 @@ def read_tmb(tmb_bytes: bytes):
     db_name = "inner/tachimanga.db" if "inner/tachimanga.db" in inner.namelist() else "tachimanga.db"
     db_bytes = bounded_zip_read(inner, db_name)
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp.write(db_bytes)
-        tmp_path = tmp.name
-
-    conn = sqlite3.connect(tmp_path)
-    conn.row_factory = sqlite3.Row
-    mangas = _read_mangas(conn)
-    conn.close()
-    Path(tmp_path).unlink(missing_ok=True)
+    with temp_sqlite(db_bytes) as (conn, tmp_path):
+        conn.row_factory = sqlite3.Row
+        mangas = _read_mangas(conn)
+        conn.close()
 
     return mangas, contents_zip_bytes
 
@@ -103,18 +97,13 @@ def write_into_tmb(target_tmb_bytes: bytes, new_mangas: list) -> bytes:
     inner = zipfile.ZipFile(io.BytesIO(contents_zip_bytes))
     db_bytes = bounded_zip_read(inner, db_path_in_zip)
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp.write(db_bytes)
-        tmp_path = tmp.name
+    with temp_sqlite(db_bytes) as (conn, tmp_path):
+        conn.row_factory = sqlite3.Row
+        report = _merge_mangas(conn, new_mangas)
+        conn.commit()
+        conn.close()
 
-    conn = sqlite3.connect(tmp_path)
-    conn.row_factory = sqlite3.Row
-    report = _merge_mangas(conn, new_mangas)
-    conn.commit()
-    conn.close()
-
-    new_db_bytes = Path(tmp_path).read_bytes()
-    Path(tmp_path).unlink(missing_ok=True)
+        new_db_bytes = Path(tmp_path).read_bytes()
 
     new_contents_zip = _rebuild_zip(contents_zip_bytes, {db_path_in_zip: new_db_bytes})
 

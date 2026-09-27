@@ -11,13 +11,12 @@ import io
 import json
 import plistlib
 import sqlite3
-import tempfile
 import zipfile
 from pathlib import Path
 
 from . import pb
 from .convert import _STRUCTURE_ERRORS, _reencode_tuple, _reraise_as_format_error
-from .safety import bounded_gzip_decompress, bounded_zip_read
+from .safety import bounded_gzip_decompress, bounded_zip_read, temp_sqlite
 
 
 def _repair_tachibk(data: bytes) -> tuple:
@@ -102,51 +101,46 @@ def _repair_tmb(data: bytes) -> tuple:
     db_path_in_zip = "inner/tachimanga.db" if "inner/tachimanga.db" in inner_names else "tachimanga.db"
     inner = zipfile.ZipFile(io.BytesIO(contents_zip_bytes))
     db_bytes = bounded_zip_read(inner, db_path_in_zip)
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp.write(db_bytes)
-        tmp_path = tmp.name
+    with temp_sqlite(db_bytes) as (conn, tmp_path):
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        report = {"broken_entries_removed": 0, "duplicate_chapters_removed": 0, "orphaned_categories_removed": 0}
 
-    conn = sqlite3.connect(tmp_path)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    report = {"broken_entries_removed": 0, "duplicate_chapters_removed": 0, "orphaned_categories_removed": 0}
+        broken_ids = [r["id"] for r in cur.execute(
+            "SELECT id FROM Manga WHERE url IS NULL OR url = '' OR title IS NULL OR title = ''"
+        ).fetchall()]
+        for mid in broken_ids:
+            cur.execute("DELETE FROM Chapter WHERE manga = ?", (mid,))
+            cur.execute("DELETE FROM History WHERE manga_id = ?", (mid,))
+            cur.execute("DELETE FROM CategoryManga WHERE manga = ?", (mid,))
+            cur.execute("DELETE FROM TrackRecord WHERE manga_id = ?", (mid,))
+            cur.execute("DELETE FROM Manga WHERE id = ?", (mid,))
+        report["broken_entries_removed"] = len(broken_ids)
 
-    broken_ids = [r["id"] for r in cur.execute(
-        "SELECT id FROM Manga WHERE url IS NULL OR url = '' OR title IS NULL OR title = ''"
-    ).fetchall()]
-    for mid in broken_ids:
-        cur.execute("DELETE FROM Chapter WHERE manga = ?", (mid,))
-        cur.execute("DELETE FROM History WHERE manga_id = ?", (mid,))
-        cur.execute("DELETE FROM CategoryManga WHERE manga = ?", (mid,))
-        cur.execute("DELETE FROM TrackRecord WHERE manga_id = ?", (mid,))
-        cur.execute("DELETE FROM Manga WHERE id = ?", (mid,))
-    report["broken_entries_removed"] = len(broken_ids)
+        for manga_id, url, count in cur.execute(
+            "SELECT manga, url, COUNT(*) FROM Chapter GROUP BY manga, url HAVING COUNT(*) > 1"
+        ).fetchall():
+            rows = cur.execute(
+                "SELECT id, read FROM Chapter WHERE manga = ? AND url = ? ORDER BY read DESC, id ASC",
+                (manga_id, url),
+            ).fetchall()
+            for row in rows[1:]:
+                cur.execute("DELETE FROM Chapter WHERE id = ?", (row["id"],))
+                cur.execute("DELETE FROM History WHERE last_chapter_id = ?", (row["id"],))
+                report["duplicate_chapters_removed"] += 1
 
-    for manga_id, url, count in cur.execute(
-        "SELECT manga, url, COUNT(*) FROM Chapter GROUP BY manga, url HAVING COUNT(*) > 1"
-    ).fetchall():
-        rows = cur.execute(
-            "SELECT id, read FROM Chapter WHERE manga = ? AND url = ? ORDER BY read DESC, id ASC",
-            (manga_id, url),
+        orphaned = cur.execute(
+            "SELECT CategoryManga.rowid AS rid FROM CategoryManga "
+            "LEFT JOIN Category ON Category.id = CategoryManga.category "
+            "WHERE Category.id IS NULL"
         ).fetchall()
-        for row in rows[1:]:
-            cur.execute("DELETE FROM Chapter WHERE id = ?", (row["id"],))
-            cur.execute("DELETE FROM History WHERE last_chapter_id = ?", (row["id"],))
-            report["duplicate_chapters_removed"] += 1
+        for row in orphaned:
+            cur.execute("DELETE FROM CategoryManga WHERE rowid = ?", (row["rid"],))
+        report["orphaned_categories_removed"] = len(orphaned)
 
-    orphaned = cur.execute(
-        "SELECT CategoryManga.rowid AS rid FROM CategoryManga "
-        "LEFT JOIN Category ON Category.id = CategoryManga.category "
-        "WHERE Category.id IS NULL"
-    ).fetchall()
-    for row in orphaned:
-        cur.execute("DELETE FROM CategoryManga WHERE rowid = ?", (row["rid"],))
-    report["orphaned_categories_removed"] = len(orphaned)
-
-    conn.commit()
-    conn.close()
-    new_db_bytes = Path(tmp_path).read_bytes()
-    Path(tmp_path).unlink(missing_ok=True)
+        conn.commit()
+        conn.close()
+        new_db_bytes = Path(tmp_path).read_bytes()
 
     new_contents_zip = tm._rebuild_zip(contents_zip_bytes, {db_path_in_zip: new_db_bytes})
     checksum = hashlib.sha1(new_contents_zip).hexdigest()

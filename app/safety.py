@@ -13,8 +13,13 @@ These helpers cap decompressed output and raise a clear, catchable error
 instead, so a bomb turns into an ordinary "conversion failed" response
 rather than a crash.
 """
+import os
+import sqlite3
+import tempfile
 import zlib
 import zipfile
+from contextlib import contextmanager
+from pathlib import Path
 
 MAX_DECOMPRESSED_BYTES = 200 * 1024 * 1024  # 200 MB - generous for even a huge library
 
@@ -55,3 +60,22 @@ def bounded_zip_read(zf: zipfile.ZipFile, name: str, max_size: int = MAX_DECOMPR
             f"refusing to process it."
         )
     return data
+
+
+@contextmanager
+def temp_sqlite(db_bytes: bytes):
+    """Yield (connection, path) for a private on-disk copy of db_bytes.
+    The file is the user's whole library, so it (and any -wal/-journal
+    sidecar) is removed even when reading or writing it raises."""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    conn = None
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(db_bytes)
+        conn = sqlite3.connect(path)
+        yield conn, path
+    finally:
+        if conn is not None:
+            conn.close()
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(path + suffix).unlink(missing_ok=True)

@@ -17,13 +17,12 @@ import io
 import json
 import plistlib
 import sqlite3
-import tempfile
 import zipfile
 from pathlib import Path
 
 from . import pb
 from .convert import _STRUCTURE_ERRORS, _reencode_tuple, _reraise_as_format_error
-from .safety import bounded_gzip_decompress, bounded_zip_read
+from .safety import bounded_gzip_decompress, bounded_zip_read, temp_sqlite
 from .sources import REGISTRY
 
 # Fallback names for when a backup doesn't carry its own source list.
@@ -85,27 +84,23 @@ def _read_native_tmb(data: bytes) -> list:
     inner = zipfile.ZipFile(io.BytesIO(contents_zip_bytes))
     db_name = "inner/tachimanga.db" if "inner/tachimanga.db" in inner.namelist() else "tachimanga.db"
     db_bytes = bounded_zip_read(inner, db_name)
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp.write(db_bytes)
-        tmp_path = tmp.name
-    conn = sqlite3.connect(tmp_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM Source")}
-    except sqlite3.Error:
-        names = {}
-    entries = []
-    for m in conn.execute("SELECT * FROM Manga WHERE in_library = 1").fetchall():
-        chapters_read = conn.execute(
-            "SELECT COUNT(*) FROM Chapter WHERE manga = ? AND read = 1", (m["id"],)
-        ).fetchone()[0]
-        last_read_s = conn.execute(
-            "SELECT MAX(last_read_at) FROM History WHERE manga_id = ?", (m["id"],)
-        ).fetchone()[0] or 0
-        entries.append(_NativeEntry((m["source"], m["url"]), m["title"], chapters_read, last_read_s * 1000,
-                                    _source_label(m["source"], names)))
-    conn.close()
-    Path(tmp_path).unlink(missing_ok=True)
+    with temp_sqlite(db_bytes) as (conn, tmp_path):
+        conn.row_factory = sqlite3.Row
+        try:
+            names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM Source")}
+        except sqlite3.Error:
+            names = {}
+        entries = []
+        for m in conn.execute("SELECT * FROM Manga WHERE in_library = 1").fetchall():
+            chapters_read = conn.execute(
+                "SELECT COUNT(*) FROM Chapter WHERE manga = ? AND read = 1", (m["id"],)
+            ).fetchone()[0]
+            last_read_s = conn.execute(
+                "SELECT MAX(last_read_at) FROM History WHERE manga_id = ?", (m["id"],)
+            ).fetchone()[0] or 0
+            entries.append(_NativeEntry((m["source"], m["url"]), m["title"], chapters_read, last_read_s * 1000,
+                                        _source_label(m["source"], names)))
+        conn.close()
     return entries
 
 
@@ -157,27 +152,22 @@ def _remove_from_tmb(data: bytes, keys_to_remove: set) -> bytes:
     db_path_in_zip = "inner/tachimanga.db" if "inner/tachimanga.db" in inner_names else "tachimanga.db"
     inner = zipfile.ZipFile(io.BytesIO(contents_zip_bytes))
     db_bytes = bounded_zip_read(inner, db_path_in_zip)
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp.write(db_bytes)
-        tmp_path = tmp.name
-
-    conn = sqlite3.connect(tmp_path)
-    cur = conn.cursor()
-    ids_to_delete = []
-    for source, url in keys_to_remove:
-        ids_to_delete += [r[0] for r in cur.execute(
-            "SELECT id FROM Manga WHERE source = ? AND url = ?", (source, url)
-        ).fetchall()]
-    for mid in ids_to_delete:
-        cur.execute("DELETE FROM Chapter WHERE manga = ?", (mid,))
-        cur.execute("DELETE FROM History WHERE manga_id = ?", (mid,))
-        cur.execute("DELETE FROM CategoryManga WHERE manga = ?", (mid,))
-        cur.execute("DELETE FROM TrackRecord WHERE manga_id = ?", (mid,))
-        cur.execute("DELETE FROM Manga WHERE id = ?", (mid,))
-    conn.commit()
-    conn.close()
-    new_db_bytes = Path(tmp_path).read_bytes()
-    Path(tmp_path).unlink(missing_ok=True)
+    with temp_sqlite(db_bytes) as (conn, tmp_path):
+        cur = conn.cursor()
+        ids_to_delete = []
+        for source, url in keys_to_remove:
+            ids_to_delete += [r[0] for r in cur.execute(
+                "SELECT id FROM Manga WHERE source = ? AND url = ?", (source, url)
+            ).fetchall()]
+        for mid in ids_to_delete:
+            cur.execute("DELETE FROM Chapter WHERE manga = ?", (mid,))
+            cur.execute("DELETE FROM History WHERE manga_id = ?", (mid,))
+            cur.execute("DELETE FROM CategoryManga WHERE manga = ?", (mid,))
+            cur.execute("DELETE FROM TrackRecord WHERE manga_id = ?", (mid,))
+            cur.execute("DELETE FROM Manga WHERE id = ?", (mid,))
+        conn.commit()
+        conn.close()
+        new_db_bytes = Path(tmp_path).read_bytes()
 
     new_contents_zip = tm._rebuild_zip(contents_zip_bytes, {db_path_in_zip: new_db_bytes})
     checksum = hashlib.sha1(new_contents_zip).hexdigest()
