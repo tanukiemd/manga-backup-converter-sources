@@ -265,6 +265,7 @@ def write_into_tachibk(target_tachibk_bytes: bytes, mangas: list):
             buf += pb.enc_message(18, bytes(tbuf))
 
         new_manga_blobs.append(pb.enc_message(1, bytes(buf)))
+        have_manga_keys.add((manga.source_id, manga.url))
         report.manga_converted.append(manga.title)
 
     original_reencoded = b"".join(_reencode_tuple(f, w, v) for f, w, v in top)
@@ -298,12 +299,15 @@ def read_aidoku(aib_bytes: bytes):
             skipped.append(title)
             continue
 
-        tachi_source_id = next(iter(mapping.tachi_source_ids))
+        manga_chapters = chapters_by_manga.get((m["sourceId"], m["id"]), [])
+        langs = [c.get("lang") for c in manga_chapters if c.get("lang")]
+        main_lang = max(set(langs), key=langs.count) if langs else None
+        tachi_source_id = mapping.tachi_source_id_for_lang(main_lang)
         tachi_url = mapping.aidoku_manga_url_from_id(m["id"], m.get("url", ""))
         lib = lib_by_key.get((m["sourceId"], m["id"]))
 
         chapters, url_by_id = [], {}
-        for c in chapters_by_manga.get((m["sourceId"], m["id"]), []):
+        for c in manga_chapters:
             churl = c.get("url") or mapping.aidoku_chapter_url_from_id(c["id"])
             chapters.append(TachiChapter(
                 url=churl,
@@ -315,19 +319,23 @@ def read_aidoku(aib_bytes: bytes):
             ))
             url_by_id[c["id"]] = churl
 
-        history, read_urls = [], set()
+        history, read_urls, page_by_url = [], set(), {}
         for h in history_by_manga.get((m["sourceId"], m["id"]), []):
             churl = url_by_id.get(h["chapterId"])
             if churl is None:
                 continue
             if h.get("completed"):
                 read_urls.add(churl)
+            elif (h.get("progress") or 0) > 0:
+                page_by_url[churl] = h["progress"]
             history.append(TachiHistoryEntry(
                 chapter_url=churl,
                 last_read_ms=_dt_to_ms(h["dateRead"]) if h.get("dateRead") else 0,
             ))
         for ch in chapters:
             ch.read = ch.url in read_urls
+            if not ch.read:
+                ch.last_page_read = page_by_url.get(ch.url, 0)
 
         tracking = []
         for t in track_by_manga.get((m["sourceId"], m["id"]), []):
@@ -400,6 +408,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
         sid = mapping.aidoku_id
         key = (sid, mid)
         used_source_ids.add(sid)
+        chapter_lang = mapping.aidoku_lang_for(manga.source_id)
         nsfw, gl = _nsfw_viewer(manga.genres)
         viewer = 4 if gl & {"manhwa", "manhua", "webtoon", "long strip"} else 1
 
@@ -423,6 +432,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                 "nsfw": nsfw, "viewer": viewer, "neverUpdate": False, "chapterFlags": 0, "editedKeys": 0,
             })
             new["manga"].append(m)
+            have_manga.add(key)
             report.manga_converted.append(manga.title)
         else:
             report.manga_already_present.append(manga.title)
@@ -441,7 +451,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             if ch.scanlator:
                 entry["scanlator"] = ch.scanlator
             entry["url"] = ch.url
-            entry["lang"] = "en"
+            entry["lang"] = chapter_lang
             if ch.chapter_number is not None:
                 entry["chapter"] = ch.chapter_number
             if vol is not None:
@@ -451,9 +461,11 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
             entry["locked"] = False
             entry["sourceOrder"] = ch.source_order
             new["chapters"].append(entry)
+            have_ch.add((sid, mid, cid))
             report.chapters_added += 1
 
         lastread, lastchap = None, None
+        chapter_by_url = {ch.url: ch for ch in manga.chapters}
         for h in manga.history:
             try:
                 cid = mapping.tachi_to_aidoku_chapter_id(h.chapter_url)
@@ -464,11 +476,17 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                 lastread = when
             if (sid, mid, cid) in have_hist:
                 continue
+            # History also exists for chapters that were only opened part-way;
+            # writing those as completed would mark them read in Aidoku.
+            ch = chapter_by_url.get(h.chapter_url)
+            completed = ch.read if ch is not None else True
             new["history"].append({
                 "dateRead": when or dt.datetime.now(UTC).replace(tzinfo=None),
                 "sourceId": sid, "chapterId": cid, "mangaId": mid,
-                "progress": -1, "total": 0, "completed": True,
+                "progress": -1 if completed else (ch.last_page_read or 0), "total": 0,
+                "completed": completed,
             })
+            have_hist.add((sid, mid, cid))
             report.history_added += 1
         for ch in manga.chapters:
             if ch.date_upload_ms:
@@ -496,6 +514,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                 "categories": manga.categories, "mangaId": mid, "sourceId": sid,
             })
             new["library"].append(lib)
+            have_lib[key] = lib
             for cn in manga.categories:
                 if cn not in all_categories:
                     all_categories.append(cn)
@@ -507,6 +526,7 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
                 "id": str(t.media_id), "trackerId": "anilist", "mangaId": mid, "sourceId": sid,
                 "title": t.title, "chapterOffset": 0,
             })
+            have_trk.add((sid, mid, "anilist"))
 
     for k in new:
         AI[k] = AI[k] + new[k]

@@ -161,6 +161,7 @@ def _merge_mangas(conn, new_mangas):
              manga.source_id, now_ms, now_ms),
         )
         manga_id = cur.lastrowid
+        existing.add(key)
         report.manga_converted.append(manga.title)
 
         chapter_id_by_url = {}

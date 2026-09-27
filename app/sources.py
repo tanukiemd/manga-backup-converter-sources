@@ -9,6 +9,7 @@ internal id schemes - there is no way to derive this generically from a
 source name/baseURL match alone). Sources not listed here are reported as
 "not convertible" rather than guessed at.
 """
+import hashlib
 import re
 
 
@@ -32,6 +33,50 @@ class SourceMapping:
         # reconstruct the original tachi-side url later). Defaults to
         # aidoku_manga_url_from_id(id) when a source has no such info to lose.
         self.tachi_to_aidoku_manga_url = tachi_to_aidoku_manga_url
+        # Filled in via _attach_languages() for sources that ship one
+        # Tachiyomi sourceId per language but are a single Aidoku source.
+        self.tachi_id_by_lang = {}
+        self.lang_by_tachi_id = {}
+
+    def tachi_source_id_for_lang(self, aidoku_lang=None) -> int:
+        """Aidoku -> Tachiyomi: pick the per-language source matching the
+        chapters' language (chapter ids differ per language on e.g. MangaDex,
+        so the wrong one loses read progress), falling back to English."""
+        if not self.tachi_id_by_lang:
+            return min(self.tachi_source_ids)
+        lang = (aidoku_lang or "").lower()
+        lang = _AIDOKU_TO_TACHI_LANG.get(lang, lang)
+        for candidate in (lang, lang.split("-")[0], "en"):
+            if candidate in self.tachi_id_by_lang:
+                return self.tachi_id_by_lang[candidate]
+        return min(self.tachi_source_ids)
+
+    def aidoku_lang_for(self, tachi_source_id: int) -> str:
+        lang = self.lang_by_tachi_id.get(tachi_source_id)
+        if lang is None:
+            return "en"
+        return _TACHI_TO_AIDOKU_LANG.get(lang, lang)
+
+
+# Aidoku's multi-language sources use MangaDex-style codes; the Tachiyomi
+# extensions use BCP-47-ish ones for a few regional variants.
+_AIDOKU_TO_TACHI_LANG = {"es-la": "es-419", "zh": "zh-hans", "zh-hk": "zh-hant"}
+_TACHI_TO_AIDOKU_LANG = {v: k for k, v in _AIDOKU_TO_TACHI_LANG.items()}
+
+
+def _tachi_source_id(name: str, lang: str, version: int = 1) -> int:
+    """Tachiyomi's own HttpSource id: first 8 bytes of md5("name/lang/version")
+    with the sign bit cleared."""
+    digest = hashlib.md5(f"{name.lower()}/{lang}/{version}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
+
+
+def _attach_languages(mapping, extension_name, langs):
+    by_lang = {lang.lower(): _tachi_source_id(extension_name, lang) for lang in langs}
+    # Guards against a typo silently routing titles to the wrong source.
+    assert set(by_lang.values()) == mapping.tachi_source_ids, mapping.name
+    mapping.tachi_id_by_lang = by_lang
+    mapping.lang_by_tachi_id = {i: lang for lang, i in by_lang.items()}
 
 
 def _mangadex_manga_id(tachi_url: str) -> str:
@@ -349,6 +394,16 @@ READCOMICSONLINE = SourceMapping(
     tachi_to_aidoku_chapter_id=_readcomicsonline_chapter_id,
     aidoku_chapter_url_from_id=_readcomicsonline_chapter_url,
 )
+
+_attach_languages(MANGADEX, "MangaDex", [
+    "af", "ar", "az", "be", "bg", "bn", "ca", "cs", "cv", "da", "de", "el", "en", "eo", "es",
+    "es-419", "et", "eu", "fa", "fi", "fil", "fr", "ga", "he", "hi", "hr", "hu", "id", "it",
+    "ja", "jv", "ka", "kk", "ko", "la", "lt", "mn", "ms", "my", "ne", "nl", "no", "pl", "pt",
+    "pt-BR", "ro", "ru", "sk", "sq", "sr", "sv", "ta", "te", "th", "tr", "uk", "ur", "uz",
+    "vi", "zh-Hans", "zh-Hant",
+])
+_attach_languages(MANGAPLUS, "MANGA Plus by SHUEISHA", ["de", "en", "es", "fr", "id", "pt-BR", "ru", "th", "vi"])
+_attach_languages(MANGAFIRE, "MangaFire", ["en", "es", "es-419", "fr", "ja", "pt", "pt-BR"])
 
 REGISTRY = [
     MANGADEX, COMIX, MANGAPLUS, MANGAFIRE,
