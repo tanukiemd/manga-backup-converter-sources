@@ -31,11 +31,8 @@ def _read_full(data: bytes, app_name: str):
         mangas, _ = tm.read_tmb(data)
         return mangas
     elif app_name == "aidoku":
-        # Use the native reader for the source key (not the cross-app
-        # translated one) so unmapped sources still count.
-        AI_mangas = _read_native_aib(data)
-        # _read_native_aib doesn't carry genres/date_added - read those
-        # straight from the plist here instead of a second full parse.
+        # Read the plist directly (not the cross-app translated backup) so
+        # unmapped sources still count and genres/date_added are available.
         import plistlib
         AI = plistlib.loads(data)
         lib_by_key = {(l["sourceId"], l["mangaId"]): l for l in AI.get("library", [])}

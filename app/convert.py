@@ -24,7 +24,7 @@ import plistlib
 from . import pb
 from .model import TachiManga, TachiChapter, TachiHistoryEntry, TachiTrack
 from .sources import BY_TACHI_SOURCE_ID, BY_AIDOKU_ID
-from .safety import bounded_gzip_decompress, DecompressionBombError
+from .safety import bounded_gzip_decompress
 
 UTC = dt.timezone.utc
 STATUS_TACHI_TO_AIDOKU = {1: 1, 2: 2, 4: 2, 5: 3, 6: 4}
