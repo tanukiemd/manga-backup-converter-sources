@@ -59,6 +59,33 @@ class _AidokuStub:
         self.date_added = date_added  # datetime or None
 
 
+# Lucky Star "reader type" for the share card: each girl collects points from
+# genres that fit her (substring match, any language the tags come in), plus
+# a bonus from the library's shape. Ties go to Konata, the site's #1.
+READER_TYPE_GENRES = {
+    "konata": ("action", "isekai", "game", "fantasy", "comedy", "shounen", "adventure", "martial"),
+    "kagami": ("drama", "psycholog", "mystery", "thriller", "historical", "seinen", "tragedy", "horror"),
+    "tsukasa": ("romance", "slice of life", "shoujo", "school", "cooking", "comedy", "josei", "fluff"),
+    "miyuki": ("sci", "medical", "mecha", "sports", "supernatural", "josei", "music", "award"),
+}
+
+
+def reader_type(genre_counter: Counter, total_manga: int, total_chapters_read: int) -> str:
+    scores = {girl: 0.0 for girl in READER_TYPE_GENRES}
+    for genre, n in genre_counter.items():
+        g = genre.lower()
+        for girl, keys in READER_TYPE_GENRES.items():
+            if any(k in g for k in keys):
+                scores[girl] += n
+    total = sum(scores.values()) or 1
+    scores = {girl: v / total for girl, v in scores.items()}
+    if total_manga and total_chapters_read / total_manga >= 60:
+        scores["konata"] += 0.25  # binges long series
+    if len(genre_counter) >= 25:
+        scores["miyuki"] += 0.2  # reads a bit of everything
+    return max(scores, key=lambda girl: (scores[girl], girl == "konata"))
+
+
 def compute_stats(data: bytes, app_name: str) -> dict:
     try:
         mangas = _read_full(data, app_name)
@@ -116,4 +143,5 @@ def compute_stats(data: bytes, app_name: str) -> dict:
         "top_sources": source_counter.most_common(5),
         "top_genres": genre_counter.most_common(5),
         "oldest_entry_title": oldest[0] if oldest else None,
+        "reader_type": reader_type(genre_counter, total_manga, total_chapters_read),
     }
