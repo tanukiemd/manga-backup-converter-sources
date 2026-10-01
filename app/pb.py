@@ -3,9 +3,15 @@ import struct
 from collections import defaultdict
 
 
+class ProtobufError(ValueError):
+    """The bytes aren't valid protobuf - in practice a damaged backup."""
+
+
 def decode_varint(b, i):
     r = s = 0
     while True:
+        if i >= len(b):
+            raise ProtobufError("truncated varint")
         c = b[i]
         i += 1
         r |= (c & 0x7F) << s
@@ -35,7 +41,9 @@ def parse(b):
             v = b[i:i + length]
             i += length
         else:
-            raise ValueError(f"unsupported wire type {wire}")
+            raise ProtobufError(f"unsupported wire type {wire}")
+        if i > n:
+            raise ProtobufError(f"field {field} runs past the end of the data")
         out.append((field, wire, v))
     return out
 

@@ -37,6 +37,10 @@ def bounded_gzip_decompress(data: bytes, max_size: int = MAX_DECOMPRESSED_BYTES)
             f"refusing to process it."
         )
     result += d.flush()
+    if not d.eof:
+        # Unlike gzip.decompress, a decompressobj silently returns whatever it
+        # got from a cut-off file - which then "converts" as an empty library.
+        raise EOFError("Compressed file ended before the end-of-stream marker was reached")
     if len(result) > max_size:
         raise DecompressionBombError(
             f"This backup decompresses to more than {max_size // (1024 * 1024)}MB - "
