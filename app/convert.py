@@ -635,12 +635,16 @@ def write_into_aidoku(target_aib_bytes: bytes, mangas: list):
 # ---------------------------------------------------------------------------
 
 APPS = ("tachiyomi", "tachimanga", "aidoku")
+# Readable but never written: Paperback has no writer, and its sources only
+# map onto Tachiyomi-ecosystem extensions (see paperback.py).
+SOURCE_ONLY_APPS = ("paperback",)
 
 
 APP_LABELS_FOR_ERRORS = {
     "tachiyomi": "Tachiyomi/Mihon/Komikku",
     "tachimanga": "Tachimanga",
     "aidoku": "Aidoku",
+    "paperback": "Paperback",
 }
 
 # Errors that mean "the file parsed as the right container format (gzip/zip/
@@ -665,10 +669,15 @@ def convert_backup(source_bytes: bytes, source_app: str, target_bytes: bytes, ta
 
     if source_app == target_app:
         raise ValueError("Source and target app must be different.")
+    if source_app == "paperback" and target_app == "aidoku":
+        raise ValueError("Paperback backups can only be converted to Tachiyomi / Mihon / Komikku or Tachimanga.")
 
     aidoku_unmapped = []
     try:
-        if source_app == "tachiyomi":
+        if source_app == "paperback":
+            from .paperback import read_paperback
+            mangas, skipped = read_paperback(source_bytes, aidoku_unmapped)
+        elif source_app == "tachiyomi":
             mangas = read_tachibk(source_bytes)
             skipped = []
         elif source_app == "tachimanga":
@@ -707,9 +716,14 @@ def analyze_coverage(source_bytes: bytes, source_app: str, target_app: str):
 
     if source_app == target_app:
         raise ValueError("Source and target app must be different.")
+    if source_app == "paperback" and target_app == "aidoku":
+        raise ValueError("Paperback backups can only be converted to Tachiyomi / Mihon / Komikku or Tachimanga.")
 
     try:
-        if source_app == "aidoku":
+        if source_app == "paperback":
+            from .paperback import read_paperback
+            mangas, skipped_titles = read_paperback(source_bytes)
+        elif source_app == "aidoku":
             mangas, skipped_titles = read_aidoku(source_bytes)
         elif source_app == "tachimanga":
             mangas, skipped_titles = tm.read_tmb(source_bytes)
@@ -723,6 +737,14 @@ def analyze_coverage(source_bytes: bytes, source_app: str, target_app: str):
         _reraise_as_format_error(source_app, e)
 
     identity = {"tachiyomi", "tachimanga"} >= {source_app, target_app}
+    if source_app == "paperback":
+        # read_paperback() only returns manga whose source it can map
+        return {
+            "total": len(mangas) + len(skipped_titles),
+            "transferable": [{"title": m.title, "source": m.source_name} for m in mangas],
+            "not_transferable": list(skipped_titles),
+            "identity": False,
+        }
 
     transferable = []
     not_transferable = list(skipped_titles)
